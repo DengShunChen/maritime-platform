@@ -1,5 +1,6 @@
 # Maritime Platform - 海事平台技術文檔
 
+![Maritime Platform Screenshot](./screenshot.png)
 ## 專案概述
 
 Maritime Platform 是一個基於 Web 的氣象數據可視化平台，專門用於展示和分析 WRF (Weather Research and Forecasting) 模型輸出的氣象場數據。系統支持多種氣象變數的交互式可視化，包括溫度、氣壓、降水、風場等。
