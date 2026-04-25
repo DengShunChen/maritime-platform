@@ -1,0 +1,215 @@
+.time-slicer-container {
+  position: fixed;
+  left: 20px;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 20px;
+  height: 80px;
+}
+
+/* Time Display Block */
+.time-display-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 100px;
+  border-right: 1px solid var(--windy-border);
+  padding-right: 20px;
+}
+
+.time-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+.date-value {
+  font-size: 11px;
+  color: var(--windy-text-dim);
+  margin-top: 4px;
+}
+
+.timezone-tag {
+  font-size: 9px;
+  color: var(--windy-accent-alt);
+  font-weight: 800;
+  margin-top: 2px;
+}
+
+/* Controls Section */
+.time-main-controls {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.playback-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-play {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--windy-bg-dark);
+  border: 2px solid var(--windy-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-play:hover {
+  border-color: var(--windy-accent-alt);
+  box-shadow: 0 0 10px var(--windy-accent-glow);
+}
+
+.play-icon-container {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-play {
+  width: 0;
+  height: 0;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-left: 14px solid var(--windy-accent-alt);
+  margin-left: 4px;
+}
+
+.icon-pause {
+  width: 14px;
+  height: 14px;
+  border-left: 4px solid var(--windy-accent-alt);
+  border-right: 4px solid var(--windy-accent-alt);
+}
+
+.speed-selector {
+  display: flex;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 2px;
+  border-radius: 12px;
+  border: 1px solid var(--windy-border);
+}
+
+.speed-tag {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--windy-text-muted);
+  background: transparent;
+  border-radius: 10px;
+}
+
+.speed-tag.active {
+  background: var(--windy-accent);
+  color: white;
+}
+
+/* Timeline Rail */
+.timeline-rail-wrapper {
+  flex: 1;
+  position: relative;
+  height: 40px;
+  display: flex;
+  align-items: center;
+}
+
+.day-night-indicator {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  display: flex;
+  border-radius: 2px;
+  overflow: hidden;
+  opacity: 0.6;
+}
+
+.dn-segment.day { background: #f59e0b; }
+.dn-segment.night { background: #312e81; }
+
+.timeline-rail-background {
+  position: absolute;
+  width: 100%;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.timeline-rail-progress {
+  position: absolute;
+  height: 2px;
+  background: var(--windy-accent-alt);
+  top: 50%;
+  transform: translateY(-50%);
+  box-shadow: 0 0 8px var(--windy-accent-glow);
+}
+
+.timeline-slider {
+  width: 100%;
+  position: relative;
+  z-index: 2;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.timeline-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 18px;
+  width: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--windy-accent);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+  margin-top: -8px;
+}
+
+/* Hover Card */
+.timeline-hover-card {
+  position: absolute;
+  top: -35px;
+  background: var(--windy-accent);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  transform: translateX(-50%);
+  pointer-events: none;
+  box-shadow: var(--shadow-panel);
+}
+
+.card-arrow {
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid var(--windy-accent);
+}
+
+@media (max-width: 1024px) {
+  .time-display-block { display: none; }
+  .time-slicer-container { left: 10px; right: 10px; bottom: 10px; }
+}

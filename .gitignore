@@ -1,0 +1,24 @@
+# Git Ignore File
+
+# AI Context
+.cobridge
+
+# .traerules
+.traerules
+
+# .cursorrules
+.cursorrules
+
+# GitHub Copilot Instructions
+.github/copilot-instructions.md
+
+# Antigravity Rules
+.agents/rules/system.md
+
+# Claude Code Rules
+CLAUDE.md
+
+# Codex Rules
+AGENTS.md
+data/
+backend-service/data/

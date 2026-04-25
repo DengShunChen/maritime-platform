@@ -1,0 +1,98 @@
+/* Loading Overlay */
+
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 10, 15, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: overlayFadeIn 0.2s ease-out;
+}
+
+@keyframes overlayFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  animation: rotate 1.5s linear infinite;
+}
+
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.loading-spinner svg {
+  width: 100%;
+  height: 100%;
+}
+
+.spinner-track {
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.spinner-fill {
+  stroke: #ef5350;
+  stroke-linecap: round;
+  animation: dash 1.5s ease-in-out infinite;
+}
+
+@keyframes dash {
+  0% {
+    stroke-dashoffset: 100;
+    transform: rotate(0deg);
+  }
+  50% {
+    stroke-dashoffset: 30;
+  }
+  100% {
+    stroke-dashoffset: 100;
+    transform: rotate(360deg);
+  }
+}
+
+.loading-message {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.loading-progress-container {
+  width: 200px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.loading-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #ef5350, #ff7043);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.loading-progress-text {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}

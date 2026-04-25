@@ -1,0 +1,179 @@
+/* Windy.com-style Global Styles */
+:root {
+  /* Color Palette - Industrial Utilitarian */
+  --windy-bg-dark: #0b0c10;
+  --windy-bg-panel: rgba(11, 12, 16, 0.95);
+  --windy-bg-glass: rgba(11, 12, 16, 0.85);
+  --windy-border: rgba(102, 252, 241, 0.2);
+  --windy-border-light: rgba(102, 252, 241, 0.4);
+  --windy-accent: #45a29e;
+  --windy-accent-glow: rgba(69, 162, 158, 0.4);
+  --windy-accent-alt: #66fcf1;
+  --windy-text: #c5c6c7;
+  --windy-text-dim: rgba(197, 198, 199, 0.7);
+  --windy-text-muted: rgba(197, 198, 199, 0.4);
+  --windy-success: #45a29e;
+  --windy-info: #66fcf1;
+
+  /* Typography */
+  --font-primary: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Spacing & Structure (Sharp edges) */
+  --panel-radius: 4px;
+  --button-radius: 2px;
+
+  /* Effects */
+  --blur-heavy: blur(20px);
+  --blur-medium: blur(12px);
+  --blur-light: blur(8px);
+  --shadow-panel: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-button: 0 4px 12px rgba(0, 0, 0, 0.3);
+
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-medium: 0.25s ease;
+  --transition-slow: 0.4s ease;
+}
+
+/* Reset and Base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-primary);
+  background: var(--windy-bg-dark);
+  color: var(--windy-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* App Container */
+.App {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Glassmorphism Effect Mixin (applied via classes) */
+.glass-panel {
+  background: var(--windy-bg-glass);
+  backdrop-filter: var(--blur-heavy);
+  -webkit-backdrop-filter: var(--blur-heavy);
+  border: 1px solid var(--windy-border);
+  box-shadow: var(--shadow-panel);
+}
+
+/* Button Base Styles */
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--windy-accent);
+  outline-offset: 2px;
+}
+
+/* Windy-style Icon Button */
+.icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--button-radius);
+  background: var(--windy-bg-glass);
+  backdrop-filter: var(--blur-light);
+  border: 1px solid var(--windy-border);
+  color: var(--windy-text-dim);
+  transition: all var(--transition-fast);
+}
+
+.icon-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--windy-text);
+  transform: scale(1.05);
+}
+
+.icon-button.active {
+  background: var(--windy-accent);
+  color: white;
+  box-shadow: 0 0 12px var(--windy-accent-glow);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Selection */
+::selection {
+  background: var(--windy-accent);
+  color: white;
+}
+
+/* Hide MapLibre attribution for cleaner look (optional) */
+.maplibregl-ctrl-attrib {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.3) !important;
+  font-size: 10px !important;
+}
+
+.maplibregl-ctrl-attrib a {
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* MapLibre controls styling */
+.maplibregl-ctrl-group {
+  background: var(--windy-bg-glass) !important;
+  backdrop-filter: var(--blur-medium) !important;
+  border: 1px solid var(--windy-border) !important;
+  border-radius: var(--button-radius) !important;
+  box-shadow: var(--shadow-button) !important;
+}
+
+.maplibregl-ctrl-group button {
+  background: transparent !important;
+  border: none !important;
+  color: var(--windy-text-dim) !important;
+}
+
+.maplibregl-ctrl-group button:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: var(--windy-text) !important;
+}

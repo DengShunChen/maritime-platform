@@ -1,0 +1,139 @@
+/* Error Boundary */
+
+.error-boundary {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.error-content {
+  max-width: 500px;
+  padding: 40px;
+  text-align: center;
+}
+
+.error-icon {
+  font-size: 64px;
+  margin-bottom: 24px;
+  animation: shake 0.5s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-10px); }
+  75% { transform: translateX(10px); }
+}
+
+.error-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 12px;
+}
+
+.error-message {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0 0 24px;
+  line-height: 1.6;
+}
+
+.error-details {
+  text-align: left;
+  margin-bottom: 24px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.error-details summary {
+  padding: 12px 16px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  user-select: none;
+}
+
+.error-details summary:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.error-details pre {
+  margin: 0;
+  padding: 16px;
+  font-size: 12px;
+  color: #ef5350;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.error-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.error-btn {
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.error-btn.primary {
+  background: linear-gradient(135deg, #ef5350, #e53935);
+  color: #fff;
+}
+
+.error-btn.primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(239, 83, 80, 0.4);
+}
+
+.error-btn.secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.error-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .error-content {
+    padding: 24px;
+  }
+
+  .error-icon {
+    font-size: 48px;
+  }
+
+  .error-title {
+    font-size: 22px;
+  }
+
+  .error-message {
+    font-size: 14px;
+  }
+
+  .error-actions {
+    flex-direction: column;
+  }
+
+  .error-btn {
+    width: 100%;
+  }
+}

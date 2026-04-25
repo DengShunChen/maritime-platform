@@ -1,0 +1,11 @@
+
+version: '3.8'
+services:
+  web:
+    build:
+      context: .
+      args:
+        VITE_MAPBOX_ACCESS_TOKEN: ${VITE_MAPBOX_ACCESS_TOKEN}
+        VITE_MAPTILER_API_KEY: ${VITE_MAPTILER_API_KEY}
+    ports:
+      - "8080:80"

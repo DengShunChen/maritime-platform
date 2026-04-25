@@ -1,0 +1,99 @@
+services:
+  # ── ETL: GRIB2 → COG (run-once job) ──────────────────────────────────────
+  etl-service:
+    build: ./etl
+    user: root                     # needs write access to cog_data volume
+    volumes:
+      - ./data:/data:ro            # read GRIB2 files
+      - cog_data:/cog              # write COG output
+    restart: "no"                  # batch job – run once
+    profiles:
+      - etl                        # only run with: docker compose --profile etl up
+
+  # ── TiTiler: COG → XYZ tiles (FastAPI) ───────────────────────────────────
+  tile-server:
+    image: ghcr.io/developmentseed/titiler:latest
+    ports:
+      - "8000:80"               # TiTiler listens on port 80 internally
+    environment:
+      CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE: "NO"
+      GDAL_DISABLE_READDIR_ON_OPEN: "EMPTY_DIR"
+      GDAL_CACHEMAX: "512"
+      VSI_CACHE: "TRUE"
+      VSI_CACHE_SIZE: "536870912"   # 512 MB tile cache
+    volumes:
+      - cog_data:/cog:ro           # read COG files
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── Flask: metadata-only API ─────────────────────────────────────────────
+  backend-service:
+    build: ./backend-service
+    ports:
+      - "6000:5000"
+    environment:
+      DATABASE_URL: postgresql://user:password@db:5432/maritime_db
+      NETCDF_PATH: data/wrfout_d01_2025-11-13_00:00:00
+      NETCDF_DATA_DIR: data
+      COG_ROOT: /cog
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend-service:/app
+      - ./data:/app/data:ro
+      - cog_data:/cog:ro           # read COG metadata
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Nginx: SPA + proxy ───────────────────────────────────────────────────
+  web-client:
+    build: ./web-client
+    ports:
+      - "80:80"
+    volumes:
+      - ./web-client/nginx.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      backend-service:
+        condition: service_healthy
+      tile-server:
+        condition: service_healthy
+
+  # ── PostgreSQL + PostGIS ─────────────────────────────────────────────────
+  db:
+    image: postgis/postgis:13-3.3-alpine
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: maritime_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db_init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d maritime_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  db_data:
+  cog_data:    # shared volume between etl-service and tile-server
