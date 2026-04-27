@@ -40,6 +40,7 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
   const [variables, setVariables] = useState<Variable[]>([]);
   const [selectedVariable, setSelectedVariable] = useState('T2');
   const [showWind, setShowWind] = useState(true);
+  const [isWindAvailable, setIsWindAvailable] = useState(false);
   const [showContours, setShowContours] = useState(true);
   
   const [hoverData, setHoverData] = useState<{ value: number, direction?: number, units: string, variable: string } | null>(null);
@@ -104,6 +105,12 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
       setMapLoaded(true);
     });
 
+    map.current.on('error', (e) => {
+      if (e && e.error && e.error.message) {
+        console.warn('MapLibre non-fatal error:', e.error.message);
+      }
+    });
+
     map.current.on('click', (e) => {
       setClickedCoord({ lat: e.lngLat.lat, lon: e.lngLat.lng, x: e.point.x, y: e.point.y });
     });
@@ -115,6 +122,15 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
       }
     };
   }, [lat, lng, zoom]);
+
+  const checkWindAvailable = useCallback(async () => {
+    try {
+      const res = await fetch('/api/wind_texture?time=0&metadata=true');
+      setIsWindAvailable(res.ok);
+    } catch {
+      setIsWindAvailable(false);
+    }
+  }, []);
 
   const fetchCogManifest = useCallback(async () => {
     try {
@@ -131,14 +147,18 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
   useEffect(() => {
     fetch('/api/variables').then(res => res.json()).then(setVariables).catch(console.error);
     fetchCogManifest();
-  }, [fetchCogManifest]);
+    checkWindAvailable();
+  }, [fetchCogManifest, checkWindAvailable]);
 
   useEffect(() => {
     if (!mapLoaded || !map.current) return;
     setIsDataLoading(true);
 
-    if (showWind && windLayer) {
-      windLayer.loadWindData(currentTimeIndex).then(() => windLayer.start()).catch(() => showToast('風場載入失敗', 'error'));
+    if (showWind && isWindAvailable && windLayer) {
+      windLayer.loadWindData(currentTimeIndex).then(() => windLayer.start()).catch(() => {
+        showToast('風場載入失敗，功能暫停', 'error');
+        setShowWind(false);
+      });
     } else if (windLayer) {
       windLayer.stop();
     }
@@ -227,7 +247,12 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
       <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
       {variables.length > 0 && (
         <>
-          <LayerPanel variables={variables} selectedVariable={selectedVariable} onVariableChange={setSelectedVariable} showWind={showWind} onToggleWind={setShowWind} showContours={showContours} onToggleContours={setShowContours} layerOpacity={layerOpacity} onOpacityChange={setLayerOpacity} />
+          <LayerPanel 
+            variables={variables} selectedVariable={selectedVariable} onVariableChange={setSelectedVariable} 
+            showWind={showWind} onToggleWind={setShowWind} isWindAvailable={isWindAvailable}
+            showContours={showContours} onToggleContours={setShowContours} 
+            layerOpacity={layerOpacity} onOpacityChange={setLayerOpacity}
+          />
           <ColorLegend variable={selectedVariable} variableName={legendVar?.name || ''} units={legendVar?.units || ''} valueRange={valueRange} colormap={legendColormap} />
         </>
       )}

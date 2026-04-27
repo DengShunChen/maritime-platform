@@ -21,24 +21,9 @@ def create_coordinate_texture(
     lats: np.ndarray,
     lon_range: Tuple[float, float] = None,
     lat_range: Tuple[float, float] = None
-) -> Tuple[io.BytesIO, Dict[str, Any]]:
+) -> Tuple[bytes, Dict[str, Any]]:
     """
-    Encode Longitude and Latitude arrays into an RGBA PNG texture.
-    
-    Encoding (16-bit precision split into 2 bytes):
-    - R: Longitude High
-    - G: Longitude Low
-    - B: Latitude High
-    - A: Latitude Low
-    
-    Args:
-        lons: 2D array of longitudes
-        lats: 2D array of latitudes
-        lon_range: Optional (min, max) for normalization
-        lat_range: Optional (min, max) for normalization
-        
-    Returns:
-        Tuple of (BytesIO containing PNG, metadata dict)
+    Encode Longitude and Latitude arrays into a raw RGBA binary array.
     """
     # Handle NaN
     lons = np.nan_to_num(lons, nan=0.0)
@@ -74,14 +59,6 @@ def create_coordinate_texture(
     rgba[:, :, 2] = (lat_norm >> 8) & 0xFF  # B = High
     rgba[:, :, 3] = lat_norm & 0xFF         # A = Low
     
-    # Create Image
-    img = Image.fromarray(rgba, mode='RGBA')
-    
-    # Compress
-    buf = io.BytesIO()
-    img.save(buf, format='PNG', compress_level=0) # Use 0 compression for speed/precision? Or default 6.
-    buf.seek(0)
-    
     metadata = {
         'min_lon': min_lon,
         'max_lon': max_lon,
@@ -90,7 +67,7 @@ def create_coordinate_texture(
         'width': width,
         'height': height
     }
-    return buf, metadata
+    return rgba.tobytes(), metadata
 
 
 def encode_wind_to_png(

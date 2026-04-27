@@ -14,6 +14,7 @@ interface LayerPanelProps {
   onVariableChange: (variableId: string) => void;
   showWind: boolean;
   onToggleWind: (show: boolean) => void;
+  isWindAvailable?: boolean;
   showContours: boolean;
   onToggleContours: (show: boolean) => void;
   layerOpacity?: number;
@@ -36,9 +37,10 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
   onVariableChange,
   showWind,
   onToggleWind,
+  isWindAvailable = true,
   showContours,
   onToggleContours,
-  layerOpacity = 0.85,
+  layerOpacity = 0.2,
   onOpacityChange
 }) => {
   const [showOpacitySlider, setShowOpacitySlider] = useState(false);
@@ -47,14 +49,16 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
     <div className="layer-panel glass-panel">
       {/* Top Section: Controls */}
       <div className="panel-controls">
-        <button
-          className={`control-btn wind-toggle ${showWind ? 'active' : ''}`}
-          onClick={() => onToggleWind(!showWind)}
-          title="切換風場流動動畫"
-        >
-          <span className="icon">🍃</span>
-          <span className="label">風場</span>
-        </button>
+        {isWindAvailable && (
+          <button
+            className={`control-btn wind-toggle ${showWind ? 'active' : ''}`}
+            onClick={() => onToggleWind(!showWind)}
+            title="切換風場流動動畫"
+          >
+            <span className="icon">🍃</span>
+            <span className="label">風場</span>
+          </button>
+        )}
 
         <button
           className={`control-btn contour-toggle ${showContours ? 'active' : ''}`}

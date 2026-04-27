@@ -557,21 +557,19 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
       // 2. Fetch Wind Texture Image
       const image = new Image();
       image.crossOrigin = 'Anonymous';
-      image.src = `/api/wind_texture?time=${timeIndex}`;
-      await new Promise<void>((resolve, reject) => {
+      const windPromise = new Promise<void>((resolve, reject) => {
         image.onload = () => resolve();
         image.onerror = () => reject(new Error('Failed to load wind texture image'));
       });
+      image.src = `/api/wind_texture?time=${timeIndex}`;
+      await windPromise;
 
-      // 3. Fetch Coords Texture Image
-      const coordsImage = new Image();
-      coordsImage.crossOrigin = 'Anonymous';
-      coordsImage.src = `/api/coords_texture?time=${timeIndex}`;
-
+      // 3. Fetch Coords Texture Binary Data
       const coordsRes = await fetch(`/api/coords_texture?time=${timeIndex}`);
       if (!coordsRes.ok) throw new Error('Failed to fetch coords texture');
-      const coordsBlob = await coordsRes.blob();
-      const coordsUrl = URL.createObjectURL(coordsBlob);
+      
+      const coordsBuffer = await coordsRes.arrayBuffer();
+      const coordsData = new Uint8Array(coordsBuffer);
 
       const lonRange = coordsRes.headers.get('X-Coords-Lon-Range')?.split(',').map(Number);
       const latRange = coordsRes.headers.get('X-Coords-Lat-Range')?.split(',').map(Number);
@@ -584,12 +582,6 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
           latMax: latRange[1]
         };
       }
-
-      coordsImage.src = coordsUrl;
-      await new Promise<void>((resolve, reject) => {
-        coordsImage.onload = () => resolve();
-        coordsImage.onerror = () => reject(new Error('Failed to load coords texture image'));
-      });
 
       // Upload to GPU
       if (this.gl) {
@@ -609,11 +601,12 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
         if (this.coordsTexture) gl.deleteTexture(this.coordsTexture);
         this.coordsTexture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, this.coordsTexture);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, coordsImage);
+        // Note: windMetadata has width and height which must match coords
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.windMetadata.width, this.windMetadata.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, coordsData);
       }
 
     } catch (e) {

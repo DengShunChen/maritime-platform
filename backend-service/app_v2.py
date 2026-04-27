@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import io
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -22,6 +23,8 @@ app = Flask(__name__)
 CORS(app)
 app.logger.setLevel(logging.DEBUG)
 
+render_lock = threading.Lock()
+
 DATA_DIR = os.getenv("NETCDF_DATA_DIR", "data")
 DEFAULT_NETCDF = os.getenv("NETCDF_PATH", "data/wrfout_d01_2025-11-13_00:00:00")
 COG_ROOT = os.getenv("COG_ROOT", "/cog")
@@ -30,11 +33,11 @@ _CURRENT_FILE: dict[str, str] = {"path": DEFAULT_NETCDF}
 
 VARIABLE_CONFIG: dict[str, dict] = {
     "PSFC":     {"name": "表面氣壓", "units": "hPa", "colormap": "viridis", "scale": 0.01, "offset": 0.0, "candidates": ["PSFC", "sp", "P"]},
-    "T2":       {"name": "2米溫度", "units": "°C", "colormap": "rdylbu_r", "scale": 1.0, "offset": -273.15, "candidates": ["T2", "T"]},
-    "RAINC":    {"name": "對流降水", "units": "mm", "colormap": "ylgnbu", "scale": 1.0, "offset": 0.0, "candidates": ["RAINC", "tp"]},
-    "RAINNC":   {"name": "網格降水", "units": "mm", "colormap": "ylgnbu", "scale": 1.0, "offset": 0.0, "candidates": ["RAINNC"]},
-    "U10":      {"name": "U風分量", "units": "m/s", "colormap": "rdbu_r", "scale": 1.0, "offset": 0.0, "candidates": ["U10", "U"]},
-    "V10":      {"name": "V風分量", "units": "m/s", "colormap": "rdbu_r", "scale": 1.0, "offset": 0.0, "candidates": ["V10", "V"]},
+    "T2":       {"name": "2米溫度", "units": "°C", "colormap": "RdYlBu_r", "scale": 1.0, "offset": -273.15, "candidates": ["T2", "T"]},
+    "RAINC":    {"name": "對流降水", "units": "mm", "colormap": "YlGnBu", "scale": 1.0, "offset": 0.0, "candidates": ["RAINC", "tp"]},
+    "RAINNC":   {"name": "網格降水", "units": "mm", "colormap": "YlGnBu", "scale": 1.0, "offset": 0.0, "candidates": ["RAINNC"]},
+    "U10":      {"name": "U風分量", "units": "m/s", "colormap": "RdBu_r", "scale": 1.0, "offset": 0.0, "candidates": ["U10", "U"]},
+    "V10":      {"name": "V風分量", "units": "m/s", "colormap": "RdBu_r", "scale": 1.0, "offset": 0.0, "candidates": ["V10", "V"]},
     "REFD_MAX": {"name": "雷達反射率", "units": "dBZ", "colormap": "gist_ncar", "scale": 1.0, "offset": 0.0, "candidates": ["REFD_MAX", "refd"]},
     "WSPD":     {"name": "風速", "units": "m/s", "colormap": "plasma", "scale": 1.0, "offset": 0.0, "candidates": ["WSPD", "wspd"]},
 }
@@ -187,14 +190,18 @@ def get_contours():
         levels = np.arange(np.floor(v_min/interval)*interval, v_max, interval)
         ln, lt = ds["XLONG"].values, ds["XLAT"].values
         if ln.ndim == 3: ln, lt = ln[0], lt[0]
-        fig, ax = plt.subplots(); cs = ax.contour(ln, lt, vals, levels=levels)
-        features = []
-        for i, col in enumerate(cs.collections):
-            for path in col.get_paths():
-                for line in path.to_polygons(closed_only=False):
-                    coords = [[round(float(p[0]), 4), round(float(p[1]), 4)] for p in line]
-                    if len(coords) > 1: features.append(geojson.Feature(geometry=geojson.LineString(coords), properties={"value": float(cs.levels[i])}))
-        plt.close(fig); return jsonify(geojson.FeatureCollection(features))
+        
+        with render_lock:
+            fig, ax = plt.subplots(); cs = ax.contour(ln, lt, vals, levels=levels)
+            features = []
+            for i, col in enumerate(cs.collections):
+                for path in col.get_paths():
+                    for line in path.to_polygons(closed_only=False):
+                        coords = [[round(float(p[0]), 4), round(float(p[1]), 4)] for p in line]
+                        if len(coords) > 1: features.append(geojson.Feature(geometry=geojson.LineString(coords), properties={"value": float(cs.levels[i])}))
+            plt.close(fig)
+            
+        return jsonify(geojson.FeatureCollection(features))
     except Exception as e: return jsonify(error=str(e)), 500
 
 from wind_texture import encode_wind_to_png, create_coordinate_texture
@@ -221,7 +228,7 @@ def get_coords_texture():
         
         buf, metadata = create_coordinate_texture(ln, lt)
         
-        response = make_response(send_file(io.BytesIO(buf.getvalue()), mimetype='image/png'))
+        response = make_response(send_file(io.BytesIO(buf), mimetype='application/octet-stream'))
         response.headers['X-Coords-Lon-Range'] = f"{metadata['min_lon']:.6f},{metadata['max_lon']:.6f}"
         response.headers['X-Coords-Lat-Range'] = f"{metadata['min_lat']:.6f},{metadata['max_lat']:.6f}"
         response.headers['X-Coords-Grid-Size'] = f"{metadata['width']},{metadata['height']}"
@@ -268,7 +275,7 @@ def select_netcdf_file():
     _CURRENT_FILE["path"] = path; _DS_CACHE["ds"] = None
     return jsonify(status="success", current=path)
 
-@app.route("/api/tiles/<int:z>/<int:x>/<int:y>")
+@app.route("/tiles/<int:z>/<int:x>/<int:y>")
 def get_tile(z, x, y):
     """
     Dynamic tile renderer for NetCDF/GRIB2 variables.
@@ -279,11 +286,16 @@ def get_tile(z, x, y):
         t_idx = request.args.get("time", 0, int)
         vmin = request.args.get("vmin", type=float)
         vmax = request.args.get("vmax", type=float)
-        
+
         ds = get_dataset()
-        da = find_da(ds, v_id)
+        if v_id in ("WSPD", "WIND"):
+            u, v = find_da(ds, "U10"), find_da(ds, "V10")
+            da = np.sqrt(u**2 + v**2) if (u is not None and v is not None) else find_da(ds, "WSPD")
+        else:
+            da = find_da(ds, v_id)
+
         if da is None: return "Variable not found", 404
-        
+
         cfg = VARIABLE_CONFIG.get(v_id, {})
         colormap = cfg.get("colormap", "viridis")
         
@@ -298,29 +310,31 @@ def get_tile(z, x, y):
         ln, lt = ds["XLONG"].values, ds["XLAT"].values
         if ln.ndim == 3: ln, lt = ln[0], lt[0]
         
-        # Simple tile rendering logic (Using matplotlib for fast prototyping)
-        # In professional production, we'd use a more optimized quadtree approach
-        import mercantile
-        from PIL import Image
-        
-        bounds = mercantile.xy_bounds(x, y, z)
-        # Create a small 256x256 image
-        fig, ax = plt.subplots(figsize=(2.56, 2.56), dpi=100)
-        fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
-        ax.set_axis_off()
-        
-        # Draw the data using pcolormesh on the tile area
-        im = ax.pcolormesh(ln, lt, vals, vmin=vmin, vmax=vmax, cmap=colormap, shading='auto')
-        
-        # Force tile extent
-        tile_bounds = mercantile.bounds(x, y, z)
-        ax.set_xlim(tile_bounds.west, tile_bounds.east)
-        ax.set_ylim(tile_bounds.south, tile_bounds.north)
-        
-        buf = io.BytesIO()
-        fig.savefig(buf, format='png', transparent=True)
-        plt.close(fig)
-        buf.seek(0)
+        with render_lock:
+            # Simple tile rendering logic (Using matplotlib for fast prototyping)
+            # In professional production, we'd use a more optimized quadtree approach
+            import mercantile
+            from PIL import Image
+            
+            bounds = mercantile.xy_bounds(x, y, z)
+            # Create a small 256x256 image
+            fig, ax = plt.subplots(figsize=(2.56, 2.56), dpi=100)
+            fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+            ax.set_axis_off()
+            
+            # Draw the data using pcolormesh on the tile area
+            im = ax.pcolormesh(ln, lt, vals, vmin=vmin, vmax=vmax, cmap=colormap, shading='auto')
+            
+            # Force tile extent
+            tile_bounds = mercantile.bounds(x, y, z)
+            ax.set_xlim(tile_bounds.west, tile_bounds.east)
+            ax.set_ylim(tile_bounds.south, tile_bounds.north)
+            
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', transparent=True)
+            plt.close(fig)
+            buf.seek(0)
+            
         return send_file(buf, mimetype='image/png')
     except Exception as e:
         app.logger.error(f"Tile error: {e}")
