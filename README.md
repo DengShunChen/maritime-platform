@@ -158,11 +158,22 @@ maritime-platform/
 echo "VITE_MAPTILER_API_KEY=your_key" > .env
 
 # 2. 啟動服務
-docker-compose up -d
+make up          # 或 docker compose up -d
 
 # 3. 訪問應用
 http://localhost/
 ```
+
+## 工程化工具鏈
+
+| 指令 | 說明 |
+|------|------|
+| `make test` | 前端 Vitest + 後端 pytest |
+| `make lint` | ESLint/tsc + ruff（若已安裝） |
+| `make qa` | 對運行中後端跑 API smoke test |
+| `make etl` | WRF/GRIB → COG 批次轉檔 |
+
+CI：`.github/workflows/ci.yml` — PR 自動跑 lint、單元測試、build；合併前可選 integration QA（需 Docker + 資料檔）。
 
 ---
 

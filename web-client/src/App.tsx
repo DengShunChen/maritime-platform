@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import MapView from './components/MapView';
 import TimeSlicer from './components/TimeSlicer';
 import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
+import { normalizeTimePointsToMs } from './utils/time';
 
 const App: React.FC = () => {
   const [currentTimeIndex, setCurrentTimeIndex] = useState<number>(0);
@@ -42,7 +43,7 @@ const App: React.FC = () => {
         }
 
         // Valid data received
-        const points = data.map((time: number) => time * 1000); // Convert to milliseconds
+        const points = normalizeTimePointsToMs(data as number[]);
         console.log(`✅ Loaded ${points.length} time point(s) from backend`);
         setTimePoints(points);
         setCurrentTimeIndex(0); // Reset to first time point
