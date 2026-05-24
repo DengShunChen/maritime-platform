@@ -14,14 +14,8 @@ import { useToast } from './Toast';
 import { DataFileSelector } from './DataFileSelector';
 import { DataInspector } from './DataInspector';
 import { LRUCache } from '../utils/LRUCache';
-
-interface Variable {
-  id: string;
-  name: string;
-  description: string;
-  units: string;
-  colormap?: string;
-}
+import type { VariableInfo, VariableStats } from '../types/api';
+import type { Feature, FeatureCollection, LineString } from 'geojson';
 
 interface MapViewProps {
   currentTimeIndex: number;
@@ -37,7 +31,7 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
   const [zoom] = useState(3);
   const [mapLoaded, setMapLoaded] = useState(false);
   
-  const [variables, setVariables] = useState<Variable[]>([]);
+  const [variables, setVariables] = useState<VariableInfo[]>([]);
   const [selectedVariable, setSelectedVariable] = useState('T2');
   const [showWind, setShowWind] = useState(true);
   const [isWindAvailable, setIsWindAvailable] = useState(false);
@@ -70,6 +64,11 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
     if (map.current.getSource(sourceId)) map.current.removeSource(sourceId);
   };
 
+  const ensureWindOnTop = useCallback(() => {
+    if (!map.current?.getLayer('wind-particles')) return;
+    map.current.moveLayer('wind-particles');
+  }, []);
+
   useEffect(() => {
     if (map.current) return;
     map.current = new maplibregl.Map({
@@ -84,9 +83,13 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
       map.current.addControl(new maplibregl.NavigationControl(), 'top-right');
       map.current.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
 
-      const lines: any[] = [];
-      for (let ln = -180; ln <= 180; ln += 10) lines.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: [[ln, -85], [ln, 85]] } });
-      for (let lt = -80; lt <= 80; lt += 10) lines.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: [[-180, lt], [180, lt]] } });
+      const lines: Feature<LineString>[] = [];
+      for (let ln = -180; ln <= 180; ln += 10) {
+        lines.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[ln, -85], [ln, 85]] } });
+      }
+      for (let lt = -80; lt <= 80; lt += 10) {
+        lines.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[-180, lt], [180, lt]] } });
+      }
       
       map.current.addSource('graticule-source', { type: 'geojson', data: { type: 'FeatureCollection', features: lines } });
       map.current.addLayer({ id: 'graticule-layer', type: 'line', source: 'graticule-source', paint: { 'line-color': 'rgba(255,255,255,0.1)', 'line-width': 1, 'line-dasharray': [2, 2] } });
@@ -166,7 +169,7 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
     const bgVariable = selectedVariable;
     const statsUrl = `/api/variable_stats?time=${currentTimeIndex}&variable=${bgVariable}`;
 
-    const applyWithStats = (stats: any) => {
+    const applyWithStats = (stats: VariableStats) => {
       const [rawMin, rawMax] = stats.valueRange;
       const vmin = selectedVariable === 'PSFC' ? 980 : (selectedVariable === 'T2' ? -20 : rawMin);
       const vmax = selectedVariable === 'PSFC' ? 1030 : (selectedVariable === 'T2' ? 40 : rawMax);
@@ -178,7 +181,11 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
         const params = new URLSearchParams({ url: paths[Math.min(currentTimeIndex, paths.length - 1)], rescale: `${vmin},${vmax}`, colormap_name: (stats.colormap ?? 'viridis').toLowerCase(), return_mask: 'true' });
         removeLayerAndSource('weather-raster-layer', 'weather-raster-source');
         map.current!.addSource('weather-raster-source', { type: 'raster', tiles: [`/tiles/cog/tiles/WebMercatorQuad/{z}/{x}/{y}?${params}`], tileSize: 256, minzoom: 0, maxzoom: 12 });
-        map.current!.addLayer({ id: 'weather-raster-layer', type: 'raster', source: 'weather-raster-source', paint: { 'raster-opacity': layerOpacity, 'raster-resampling': 'linear' } });
+        map.current!.addLayer(
+          { id: 'weather-raster-layer', type: 'raster', source: 'weather-raster-source', paint: { 'raster-opacity': layerOpacity, 'raster-resampling': 'linear' } },
+          'wind-particles'
+        );
+        ensureWindOnTop();
       }
       setIsDataLoading(false);
     };
@@ -192,7 +199,7 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
         applyWithStats(data);
       }).catch(() => { setIsDataLoading(false); showToast('資料載入失敗', 'error'); });
     }
-  }, [currentTimeIndex, selectedVariable, mapLoaded, windLayer, showWind, dataRefreshKey, layerOpacity, showToast]);
+  }, [currentTimeIndex, selectedVariable, mapLoaded, windLayer, showWind, isWindAvailable, dataRefreshKey, layerOpacity, showToast, ensureWindOnTop]);
 
   useEffect(() => {
     if (!mapLoaded || !map.current) return;
@@ -203,13 +210,20 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
     const contourVar = (selectedVariable === 'PSFC' || selectedVariable === 'T2') ? selectedVariable : 'PSFC';
     fetch(`/api/contours?variable=${contourVar}&time=${currentTimeIndex}`)
       .then(res => res.json())
-      .then(data => {
+      .then((data: FeatureCollection) => {
         if (!map.current) return;
         map.current.addSource('contour-source', { type: 'geojson', data });
-        map.current.addLayer({ id: 'contour-layer', type: 'line', source: 'contour-source', paint: { 'line-color': 'rgba(255,255,255,0.3)', 'line-width': 1 } });
-        map.current.addLayer({ id: 'contour-labels', type: 'symbol', source: 'contour-source', layout: { 'symbol-placement': 'line', 'text-field': ['get', 'value'], 'text-size': 10 }, paint: { 'text-color': '#fff', 'text-halo-color': 'rgba(0,0,0,0.5)', 'text-halo-width': 1 } });
+        map.current.addLayer(
+          { id: 'contour-layer', type: 'line', source: 'contour-source', paint: { 'line-color': 'rgba(255,255,255,0.3)', 'line-width': 1 } },
+          'wind-particles'
+        );
+        map.current.addLayer(
+          { id: 'contour-labels', type: 'symbol', source: 'contour-source', layout: { 'symbol-placement': 'line', 'text-field': ['get', 'value'], 'text-size': 10 }, paint: { 'text-color': '#fff', 'text-halo-color': 'rgba(0,0,0,0.5)', 'text-halo-width': 1 } },
+          'wind-particles'
+        );
+        ensureWindOnTop();
       });
-  }, [mapLoaded, currentTimeIndex, selectedVariable, showContours]);
+  }, [mapLoaded, currentTimeIndex, selectedVariable, showContours, ensureWindOnTop]);
 
   useEffect(() => {
     if (!mapLoaded || !map.current) return;
@@ -256,7 +270,7 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
           <ColorLegend variable={selectedVariable} variableName={legendVar?.name || ''} units={legendVar?.units || ''} valueRange={valueRange} colormap={legendColormap} />
         </>
       )}
-      <WindControls visible={selectedVariable === 'WIND'} fadeOpacity={windFadeOpacity} speedFactor={windSpeedFactor} particleSize={windParticleSize} colorScheme={windColorScheme} onFadeOpacityChange={setWindFadeOpacity} onSpeedFactorChange={setWindSpeedFactor} onParticleSizeChange={setWindParticleSize} onColorSchemeChange={setWindColorScheme} />
+      <WindControls visible={showWind && isWindAvailable} fadeOpacity={windFadeOpacity} speedFactor={windSpeedFactor} particleSize={windParticleSize} colorScheme={windColorScheme} onFadeOpacityChange={setWindFadeOpacity} onSpeedFactorChange={setWindSpeedFactor} onParticleSizeChange={setWindParticleSize} onColorSchemeChange={setWindColorScheme} />
       <ExportButton mapRef={map} getWindCanvas={() => windLayer?.getCanvas() || null} />
       {clickedCoord && <CoordinatePopup lat={clickedCoord.lat} lon={clickedCoord.lon} x={clickedCoord.x} y={clickedCoord.y} variable={selectedVariable} timeIndex={currentTimeIndex} onClose={() => setClickedCoord(null)} onCopy={() => { navigator.clipboard.writeText(`${clickedCoord.lat}, ${clickedCoord.lon}`); showToast('座標已複製', 'success'); }} />}
     </div>

@@ -1,15 +1,9 @@
 import React, { useState } from 'react';
 import './LayerPanel.css';
-
-interface Variable {
-  id: string;
-  name: string;
-  description: string;
-  units: string;
-}
+import type { VariableInfo } from '../types/api';
 
 interface LayerPanelProps {
-  variables: Variable[];
+  variables: VariableInfo[];
   selectedVariable: string;
   onVariableChange: (variableId: string) => void;
   showWind: boolean;

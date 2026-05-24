@@ -82,6 +82,10 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
   private lastMapCenter: maplibregl.LngLat | null = null;
   private lastMapZoom: number = 0;
 
+  // Canvas size tracking for trail buffer resize
+  private lastCanvasWidth = 0;
+  private lastCanvasHeight = 0;
+
   constructor(options: WindLayerOptions & { id: string }) {
     this.id = options.id;
 
@@ -107,6 +111,7 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
 
     this.initWebGL();
     this.resizeScreenTextures();
+    this.setColorScheme(this.currentColormap);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -164,6 +169,9 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    this.lastCanvasWidth = canvas.width;
+    this.lastCanvasHeight = canvas.height;
   }
 
   private createShader(type: number, source: string): WebGLShader | null {
@@ -282,9 +290,11 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
   public render(_gl: WebGLRenderingContext, matrix: any): void {
     if (!this.isActive || !this.windTexture || !this.windMetadata) return;
 
-    // Check if resize is needed (naive check)
     const canvas = this.map!.getCanvas();
-    if (this.screenTexture && (canvas.width !== this.map!.getCanvas().width || canvas.height !== this.map!.getCanvas().height)) {
+    if (
+      this.screenTexture &&
+      (canvas.width !== this.lastCanvasWidth || canvas.height !== this.lastCanvasHeight)
+    ) {
       this.resizeScreenTextures();
     }
 
@@ -633,15 +643,34 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
       grad.addColorStop(0.5, '#21918c');
       grad.addColorStop(0.75, '#5ec962');
       grad.addColorStop(1, '#fde725');
+    } else if (scheme === 'turbo') {
+      grad.addColorStop(0, '#30123b');
+      grad.addColorStop(0.2, '#4145ab');
+      grad.addColorStop(0.4, '#4f8cce');
+      grad.addColorStop(0.6, '#aff467');
+      grad.addColorStop(0.8, '#f9fb0e');
+      grad.addColorStop(1, '#d93807');
+    } else if (scheme === 'plasma') {
+      grad.addColorStop(0, '#0c0786');
+      grad.addColorStop(0.25, '#6a00a8');
+      grad.addColorStop(0.5, '#cb4778');
+      grad.addColorStop(0.75, '#f79342');
+      grad.addColorStop(1, '#f0f921');
+    } else if (scheme === 'cool') {
+      grad.addColorStop(0, '#00ffff');
+      grad.addColorStop(0.25, '#00bfff');
+      grad.addColorStop(0.5, '#0080ff');
+      grad.addColorStop(0.75, '#0040ff');
+      grad.addColorStop(1, '#8000ff');
     } else if (scheme === 'magma') {
-      grad.addColorStop(0, '#000004');
-      grad.addColorStop(0.25, '#51127c');
-      grad.addColorStop(0.5, '#b73779');
-      grad.addColorStop(0.75, '#fc8961');
-      grad.addColorStop(1, '#fcfdbf');
+      grad.addColorStop(0, '#000003');
+      grad.addColorStop(0.25, '#3b0f6f');
+      grad.addColorStop(0.5, '#8c2980');
+      grad.addColorStop(0.75, '#dd4968');
+      grad.addColorStop(1, '#fcfcba');
     } else {
-      grad.addColorStop(0, 'black');
-      grad.addColorStop(1, 'white');
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(1, '#ffffff');
     }
 
     ctx.fillStyle = grad;

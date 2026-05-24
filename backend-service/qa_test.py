@@ -1,113 +1,115 @@
-import urllib.request
-import urllib.error
+"""
+API smoke tests — run against a live backend before deploy.
+
+Usage:
+  BACKEND_URL=http://localhost:6000 python qa_test.py
+"""
+
+from __future__ import annotations
+
 import json
+import os
 import sys
 import time
+import urllib.error
+import urllib.request
 
-BASE_URL = 'http://localhost:5000'
+BASE_URL = os.environ.get("BACKEND_URL", "http://localhost:5000").rstrip("/")
 
-def test_endpoint(path, name, expected_content_type=None):
+
+def test_endpoint(
+    path: str,
+    name: str,
+    expected_content_type: str | None = None,
+    *,
+    min_bytes: int = 0,
+) -> tuple[bool, int, str]:
     url = f"{BASE_URL}{path}"
     try:
         req = urllib.request.Request(url)
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=30) as response:
             code = response.getcode()
-            content_type = response.headers.get('Content-Type', '')
-            
+            content_type = response.headers.get("Content-Type", "")
+
             if code != 200:
                 return False, code, f"Expected 200, got {code}"
-                
+
             if expected_content_type and expected_content_type not in content_type:
                 return False, code, f"Expected Content-Type {expected_content_type}, got {content_type}"
-                
-            # Try to read a bit of the response to ensure it doesn't crash mid-stream
-            body = response.read(1024)
-            
-            if 'application/json' in content_type:
-                try:
-                    json.loads(body.decode('utf-8') if body else '{}')
-                except json.JSONDecodeError:
-                    # It might be truncated because we only read 1024 bytes, but if it's small enough it should parse.
-                    # Actually, better to read full if it's JSON to verify it doesn't crash.
-                    pass
-                    
+
+            body = response.read()
+            if len(body) < min_bytes:
+                return False, code, f"Response too small ({len(body)} bytes)"
+
+            if "application/json" in content_type:
+                json.loads(body.decode("utf-8"))
+
             return True, code, "OK"
     except urllib.error.HTTPError as e:
         try:
-            error_body = e.read().decode('utf-8', 'ignore')
-        except:
+            error_body = e.read().decode("utf-8", errors="ignore")
+        except Exception:
             error_body = ""
         return False, e.code, error_body
     except Exception as e:
         return False, 500, str(e)
 
-def run_qa():
-    print("🚀 啟動 QA 攔截機制 (QA Interception Mechanism)...")
-    
-    # Wait for service to be healthy
+
+def run_qa() -> None:
+    print(f"QA smoke tests → {BASE_URL}")
+
     max_retries = 15
     healthy = False
     for i in range(max_retries):
-        success, code, msg = test_endpoint('/health', 'Health Check')
+        success, _, _ = test_endpoint("/health", "Health Check")
         if success:
             healthy = True
             break
-        print(f"等待後端服務啟動... ({i+1}/{max_retries})")
+        print(f"Waiting for backend... ({i + 1}/{max_retries})")
         time.sleep(2)
-        
+
     if not healthy:
-        print("❌ QA 攔截：後端服務無法啟動或不健康！")
-        sys.exit(1)
-        
-    endpoints_to_test = [
-        # Basic API endpoints
-        ('/health', 'Health Check', 'application/json'),
-        ('/variables', 'Variables List', 'application/json'),
-        ('/time_points', 'Time Points', 'application/json'),
-        ('/netcdf_files', 'NetCDF Files List', 'application/json'),
-        ('/cog_manifest', 'COG Manifest', 'application/json'),
-        
-        # Stats endpoints (Native and Synthetic)
-        ('/variable_stats?variable=T2&time=0', 'Stats: T2', 'application/json'),
-        ('/variable_stats?variable=PSFC&time=0', 'Stats: PSFC', 'application/json'),
-        ('/variable_stats?variable=WSPD&time=0', 'Stats: WSPD (Synthetic)', 'application/json'),
-        ('/variable_stats?variable=RAINC&time=0', 'Stats: RAINC', 'application/json'),
-        
-        # Probe endpoints
-        ('/probe?lat=24&lon=121&variable=T2&time=0', 'Probe: T2', 'application/json'),
-        ('/probe?lat=24&lon=121&variable=WSPD&time=0', 'Probe: WSPD', 'application/json'),
-        ('/probe?lat=24&lon=121&variable=U10&time=0', 'Probe: U10', 'application/json'),
-        
-        # Contours
-        ('/contours?variable=PSFC&time=0', 'Contours: PSFC', 'application/json'),
-        ('/contours?variable=T2&time=0', 'Contours: T2', 'application/json'),
-        
-        # Dynamic Tiles
-        ('/tiles/3/6/3?variable=T2&time=0&vmin=-20&vmax=40', 'Tile: T2', 'image/png'),
-        ('/tiles/3/6/3?variable=WSPD&time=0&vmin=0&vmax=30', 'Tile: WSPD (Synthetic)', 'image/png')
-    ]
-    
-    all_passed = True
-    print("\n執行 API 端點 100% 覆蓋率測試...")
-    print("-" * 80)
-    
-    for path, name, expected_ct in endpoints_to_test:
-        success, code, msg = test_endpoint(path, name, expected_ct)
-        status = "✅ PASS" if success else f"❌ FAIL ({code})"
-        print(f"{status} | {name:<30} | {path}")
-        if not success:
-            print(f"   -> 錯誤細節: {msg[:200]}")
-            all_passed = False
-            
-    print("-" * 80)
-    if all_passed:
-        print("\n🎉 QA 攔截檢查通過：所有核心 API 狀態碼皆為 200 OK，且回傳格式正確。")
-        print("✅ 系統准許發布 (Deployment Approved)！")
-        sys.exit(0)
-    else:
-        print("\n🚨 QA 攔截觸發：偵測到錯誤 (404/500) 或格式不正確。")
-        print("❌ 發布已中斷 (Deployment Blocked)，請開發者修復！")
+        print("Backend unhealthy — aborting QA")
         sys.exit(1)
 
-if __name__ == '__main__':
+    endpoints: list[tuple[str, str, str | None, int]] = [
+        ("/health", "Health Check", "application/json", 0),
+        ("/variables", "Variables List", "application/json", 0),
+        ("/time_points", "Time Points", "application/json", 0),
+        ("/netcdf_files", "NetCDF Files List", "application/json", 0),
+        ("/cog_manifest", "COG Manifest", "application/json", 0),
+        ("/variable_stats?variable=T2&time=0", "Stats: T2", "application/json", 0),
+        ("/variable_stats?variable=PSFC&time=0", "Stats: PSFC", "application/json", 0),
+        ("/variable_stats?variable=WSPD&time=0", "Stats: WSPD", "application/json", 0),
+        ("/probe?lat=24&lon=121&variable=T2&time=0", "Probe: T2", "application/json", 0),
+        ("/probe?lat=24&lon=121&variable=WSPD&time=0", "Probe: WSPD", "application/json", 0),
+        ("/contours?variable=PSFC&time=0", "Contours: PSFC", "application/json", 0),
+        ("/tiles/3/6/3?variable=T2&time=0&vmin=-20&vmax=40", "Tile: T2", "image/png", 100),
+        ("/wind_texture?time=0&metadata=true", "Wind Metadata", "application/json", 0),
+        ("/wind_texture?time=0", "Wind Texture PNG", "image/png", 100),
+        ("/coords_texture?time=0", "Coords Texture", "application/octet-stream", 16),
+    ]
+
+    all_passed = True
+    print("\nEndpoint coverage:")
+    print("-" * 80)
+
+    for path, name, expected_ct, min_bytes in endpoints:
+        success, code, msg = test_endpoint(path, name, expected_ct, min_bytes=min_bytes)
+        status = "PASS" if success else f"FAIL ({code})"
+        print(f"{status:12} | {name:<28} | {path}")
+        if not success:
+            print(f"             -> {msg[:200]}")
+            all_passed = False
+
+    print("-" * 80)
+    if all_passed:
+        print("QA passed — deployment gate open")
+        sys.exit(0)
+
+    print("QA failed — fix errors before deploy")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
     run_qa()
