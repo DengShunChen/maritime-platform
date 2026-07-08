@@ -74,8 +74,12 @@ void main() {
         color.g / 255.0 + color.a
     );
     
-    // Check if particle is within data bounds
-    v_in_bounds = 1.0; 
+    // Hide particles near texture edges (finite WRF domain)
+    const float margin = 0.02;
+    v_in_bounds = (
+        v_particle_pos.x > margin && v_particle_pos.x < 1.0 - margin &&
+        v_particle_pos.y > margin && v_particle_pos.y < 1.0 - margin
+    ) ? 1.0 : 0.0;
     
     // Sample wind velocity to determine speed
     vec2 velocity = mix(u_wind_min, u_wind_max, texture2D(u_wind, v_particle_pos).rg);

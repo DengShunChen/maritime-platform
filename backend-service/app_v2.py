@@ -205,12 +205,39 @@ def get_contours():
     except Exception as e: return jsonify(error=str(e)), 500
 
 from wind_texture import encode_wind_to_png, create_coordinate_texture
+from etl_bridge import get_etl_status, trigger_etl_for_file
+from tile_cache import clear_all_caches, coords_texture_cache, tile_cache, wind_texture_cache
 from flask import make_response
 
 @app.route("/coords_texture", methods=["GET"])
 def get_coords_texture():
     try:
         t_idx = request.args.get("time", 0, int)
+        file_stem = Path(_CURRENT_FILE["path"]).stem
+        cache_key = (file_stem, "coords", t_idx)
+        cached = coords_texture_cache.get(cache_key)
+        if cached is not None:
+            response = make_response(send_file(io.BytesIO(cached), mimetype="application/octet-stream"))
+            # Headers must be stored — recompute minimal set from dataset if needed
+            ds = get_dataset()
+            da = find_da(ds, "T2") or find_da(ds, "U10")
+            for d in ("Time", "time"):
+                if da is not None and d in da.dims:
+                    da = da.isel({d: min(t_idx, da.sizes[d] - 1)})
+                    break
+            lons_da = ds.coords.get("XLONG", ds.coords.get("longitude"))
+            lats_da = ds.coords.get("XLAT", ds.coords.get("latitude"))
+            ln, lt = lons_da.values, lats_da.values
+            if ln.ndim == 3:
+                ln, lt = ln[0], lt[0]
+            response.headers["X-Coords-Lon-Range"] = f"{float(np.nanmin(ln)):.6f},{float(np.nanmax(ln)):.6f}"
+            response.headers["X-Coords-Lat-Range"] = f"{float(np.nanmin(lt)):.6f},{float(np.nanmax(lt)):.6f}"
+            response.headers["X-Coords-Grid-Size"] = f"{ln.shape[1]},{ln.shape[0]}"
+            response.headers["Access-Control-Expose-Headers"] = (
+                "X-Coords-Lon-Range,X-Coords-Lat-Range,X-Coords-Grid-Size"
+            )
+            return response
+
         ds = get_dataset()
         # Find any variable just to get the coordinate grid
         da = find_da(ds, "T2")
@@ -233,7 +260,8 @@ def get_coords_texture():
         response.headers['X-Coords-Lat-Range'] = f"{metadata['min_lat']:.6f},{metadata['max_lat']:.6f}"
         response.headers['X-Coords-Grid-Size'] = f"{metadata['width']},{metadata['height']}"
         response.headers['Access-Control-Expose-Headers'] = 'X-Coords-Lon-Range,X-Coords-Lat-Range,X-Coords-Grid-Size'
-        
+
+        coords_texture_cache.set(cache_key, buf)
         return response
     except Exception as e:
         app.logger.error(f"coords error: {e}", exc_info=True)
@@ -242,7 +270,19 @@ def get_coords_texture():
 @app.route("/wind_texture")
 def get_wind_texture():
     try:
+        import json as json_mod
+
         t_idx = request.args.get("time", 0, int)
+        file_stem = Path(_CURRENT_FILE["path"]).stem
+        want_meta = request.args.get("metadata", "false").lower() == "true"
+        cache_key = (file_stem, "wind_meta" if want_meta else "wind_png", t_idx)
+
+        cached = wind_texture_cache.get(cache_key)
+        if cached is not None:
+            if want_meta:
+                return jsonify(json_mod.loads(cached.decode("utf-8")))
+            return send_file(io.BytesIO(cached), mimetype="image/png")
+
         ds = get_dataset()
         u_da, v_da = find_da(ds, "U10"), find_da(ds, "V10")
         if u_da is None or v_da is None: return jsonify(error="Wind missing"), 404
@@ -252,9 +292,19 @@ def get_wind_texture():
         ln, lt = ds["XLONG"].values, ds["XLAT"].values
         if ln.ndim == 3: ln, lt = ln[0], lt[0]
         buf, meta = encode_wind_to_png(u_v, v_v)
-        if request.args.get("metadata", "false").lower() == "true":
-            return jsonify({"uMin": meta['u_min'], "uMax": meta['u_max'], "vMin": meta['v_min'], "vMax": meta['v_max'], "width": meta['width'], "height": meta['height'], "bounds": [float(np.nanmin(ln)), float(np.nanmin(lt)), float(np.nanmax(ln)), float(np.nanmax(lt))]})
-        return send_file(io.BytesIO(buf.getvalue()), mimetype='image/png')
+        if want_meta:
+            payload = {
+                "uMin": meta["u_min"], "uMax": meta["u_max"],
+                "vMin": meta["v_min"], "vMax": meta["v_max"],
+                "width": meta["width"], "height": meta["height"],
+                "bounds": [float(np.nanmin(ln)), float(np.nanmin(lt)), float(np.nanmax(ln)), float(np.nanmax(lt))],
+            }
+            raw = json_mod.dumps(payload).encode("utf-8")
+            wind_texture_cache.set(cache_key, raw)
+            return jsonify(payload)
+        png_bytes = buf.getvalue()
+        wind_texture_cache.set(cache_key, png_bytes)
+        return send_file(io.BytesIO(png_bytes), mimetype="image/png")
     except Exception as e: return jsonify(error=str(e)), 500
 
 @app.route("/netcdf_files")
@@ -268,12 +318,84 @@ def list_netcdf_files():
         return jsonify({"files": res, "current": _CURRENT_FILE["path"]})
     except Exception as e: return jsonify(error=str(e)), 500
 
+@app.route("/etl/status")
+def etl_status():
+    return jsonify(get_etl_status())
+
+
+@app.route("/cache/stats")
+def cache_stats():
+    import os
+
+    workers = os.getenv("GUNICORN_WORKERS", "1")
+    return jsonify(
+        tile=tile_cache.stats(),
+        wind_texture=wind_texture_cache.stats(),
+        coords_texture=coords_texture_cache.stats(),
+        note="LRU is per Gunicorn worker process; use GUNICORN_WORKERS=1 for dev cache testing",
+        gunicorn_workers=workers,
+    )
+
+
 @app.route("/netcdf_files/select", methods=["POST"])
 def select_netcdf_file():
     path = request.json.get("path")
-    if not path or not Path(path).exists(): return jsonify(error="Not found"), 404
-    _CURRENT_FILE["path"] = path; _DS_CACHE["ds"] = None
-    return jsonify(status="success", current=path)
+    if not path or not Path(path).exists():
+        return jsonify(error="Not found"), 404
+    _CURRENT_FILE["path"] = path
+    _DS_CACHE["ds"] = None
+    clear_all_caches()
+    etl_started = trigger_etl_for_file(path, COG_ROOT)
+    return jsonify(status="success", current=path, etl={"started": etl_started})
+
+def _render_tile_png(
+    v_id: str,
+    t_idx: int,
+    z: int,
+    x: int,
+    y: int,
+    vmin: float | None,
+    vmax: float | None,
+) -> bytes:
+    """Render one map tile PNG (caller must hold render_lock)."""
+    import mercantile
+
+    ds = get_dataset()
+    if v_id in ("WSPD", "WIND"):
+        u, v = find_da(ds, "U10"), find_da(ds, "V10")
+        da = np.sqrt(u**2 + v**2) if (u is not None and v is not None) else find_da(ds, "WSPD")
+    else:
+        da = find_da(ds, v_id)
+
+    if da is None:
+        raise ValueError("Variable not found")
+
+    cfg = VARIABLE_CONFIG.get(v_id, {})
+    colormap = cfg.get("colormap", "viridis")
+
+    for d in ("Time", "time"):
+        if d in da.dims:
+            da = da.isel({d: min(t_idx, da.sizes[d] - 1)})
+            break
+
+    vals = da.values.astype("float64") * cfg.get("scale", 1.0) + cfg.get("offset", 0.0)
+    ln, lt = ds["XLONG"].values, ds["XLAT"].values
+    if ln.ndim == 3:
+        ln, lt = ln[0], lt[0]
+
+    fig, ax = plt.subplots(figsize=(2.56, 2.56), dpi=100)
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+    ax.set_axis_off()
+    ax.pcolormesh(ln, lt, vals, vmin=vmin, vmax=vmax, cmap=colormap, shading="auto")
+    tile_bounds = mercantile.bounds(x, y, z)
+    ax.set_xlim(tile_bounds.west, tile_bounds.east)
+    ax.set_ylim(tile_bounds.south, tile_bounds.north)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", transparent=True)
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
+
 
 @app.route("/tiles/<int:z>/<int:x>/<int:y>")
 def get_tile(z, x, y):
@@ -287,55 +409,14 @@ def get_tile(z, x, y):
         vmin = request.args.get("vmin", type=float)
         vmax = request.args.get("vmax", type=float)
 
-        ds = get_dataset()
-        if v_id in ("WSPD", "WIND"):
-            u, v = find_da(ds, "U10"), find_da(ds, "V10")
-            da = np.sqrt(u**2 + v**2) if (u is not None and v is not None) else find_da(ds, "WSPD")
-        else:
-            da = find_da(ds, v_id)
+        file_stem = Path(_CURRENT_FILE["path"]).stem
+        cache_key = tile_cache.make_key(file_stem, v_id, t_idx, z, x, y, vmin, vmax)
+        def _render() -> bytes:
+            with render_lock:
+                return _render_tile_png(v_id, t_idx, z, x, y, vmin, vmax)
 
-        if da is None: return "Variable not found", 404
-
-        cfg = VARIABLE_CONFIG.get(v_id, {})
-        colormap = cfg.get("colormap", "viridis")
-        
-        # Select time
-        for d in ("Time", "time"):
-            if d in da.dims: da = da.isel({d: min(t_idx, da.sizes[d]-1)}); break
-            
-        # Get data values and apply scale/offset
-        vals = da.values.astype("float64") * cfg.get("scale", 1.0) + cfg.get("offset", 0.0)
-        
-        # Determine bounds
-        ln, lt = ds["XLONG"].values, ds["XLAT"].values
-        if ln.ndim == 3: ln, lt = ln[0], lt[0]
-        
-        with render_lock:
-            # Simple tile rendering logic (Using matplotlib for fast prototyping)
-            # In professional production, we'd use a more optimized quadtree approach
-            import mercantile
-            from PIL import Image
-            
-            bounds = mercantile.xy_bounds(x, y, z)
-            # Create a small 256x256 image
-            fig, ax = plt.subplots(figsize=(2.56, 2.56), dpi=100)
-            fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
-            ax.set_axis_off()
-            
-            # Draw the data using pcolormesh on the tile area
-            im = ax.pcolormesh(ln, lt, vals, vmin=vmin, vmax=vmax, cmap=colormap, shading='auto')
-            
-            # Force tile extent
-            tile_bounds = mercantile.bounds(x, y, z)
-            ax.set_xlim(tile_bounds.west, tile_bounds.east)
-            ax.set_ylim(tile_bounds.south, tile_bounds.north)
-            
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png', transparent=True)
-            plt.close(fig)
-            buf.seek(0)
-            
-        return send_file(buf, mimetype='image/png')
+        png_bytes = tile_cache.get_or_set(cache_key, _render)
+        return send_file(io.BytesIO(png_bytes), mimetype="image/png")
     except Exception as e:
         app.logger.error(f"Tile error: {e}")
         return str(e), 500

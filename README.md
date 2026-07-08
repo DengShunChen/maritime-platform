@@ -172,6 +172,9 @@ http://localhost/
 | `make lint` | ESLint/tsc + ruff（若已安裝） |
 | `make qa` | 對運行中後端跑 API smoke test |
 | `make etl` | WRF/GRIB → COG 批次轉檔 |
+| `make load-test` | 併發測試動態圖磚 + 查看 cache hit rate |
+
+**ETL 狀態** `curl http://localhost:6000/etl/status` — 選檔後 `running:true`，完成後 `files_created>0`。idle 表示尚未觸發轉檔。
 
 CI：`.github/workflows/ci.yml` — PR 自動跑 lint、單元測試、build；合併前可選 integration QA（需 Docker + 資料檔）。
 

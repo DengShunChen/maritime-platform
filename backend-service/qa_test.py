@@ -78,6 +78,8 @@ def run_qa() -> None:
         ("/time_points", "Time Points", "application/json", 0),
         ("/netcdf_files", "NetCDF Files List", "application/json", 0),
         ("/cog_manifest", "COG Manifest", "application/json", 0),
+        ("/etl/status", "ETL Status", "application/json", 0),
+        ("/cache/stats", "Cache Stats", "application/json", 0),
         ("/variable_stats?variable=T2&time=0", "Stats: T2", "application/json", 0),
         ("/variable_stats?variable=PSFC&time=0", "Stats: PSFC", "application/json", 0),
         ("/variable_stats?variable=WSPD&time=0", "Stats: WSPD", "application/json", 0),

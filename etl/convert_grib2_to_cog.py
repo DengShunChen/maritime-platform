@@ -360,8 +360,19 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description="WRF NetCDF / GRIB2 → COG ETL (with curvilinear resampling)")
-    parser.add_argument("data_dir", help="Input directory (WRF NetCDF or GRIB2 files)")
+    parser.add_argument(
+        "data_dir",
+        nargs="?",
+        help="Input directory (WRF NetCDF or GRIB2 files); omit when using --file",
+    )
     parser.add_argument("--cog-root", default="/cog", help="Output root for COG files")
+    parser.add_argument("--file", help="Convert a single WRF NetCDF file")
     args = parser.parse_args()
 
-    convert_directory(args.data_dir, args.cog_root)
+    if args.file:
+        paths = convert_wrf_file(args.file, args.cog_root)
+        logger.info("Single-file ETL done: %d COG(s)", len(paths))
+    elif args.data_dir:
+        convert_directory(args.data_dir, args.cog_root)
+    else:
+        parser.error("Provide data_dir or --file")

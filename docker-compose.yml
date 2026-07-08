@@ -33,6 +33,7 @@ services:
   # ── Flask: metadata-only API ─────────────────────────────────────────────
   backend-service:
     build: ./backend-service
+    entrypoint: ["sh", "/app/docker-entrypoint.sh"]
     ports:
       - "6000:5000"
     environment:
@@ -40,13 +41,17 @@ services:
       NETCDF_PATH: data/wrfout_d01_2025-11-13_00:00:00
       NETCDF_DATA_DIR: data
       COG_ROOT: /cog
+      ETL_AUTO: "true"
+      ETL_DIR: /app/etl
+      GUNICORN_WORKERS: "1"
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./backend-service:/app
+      - ./etl:/app/etl:ro
       - ./data:/app/data:ro
-      - cog_data:/cog:ro           # read COG metadata
+      - cog_data:/cog              # read/write for auto ETL
     deploy:
       resources:
         limits:

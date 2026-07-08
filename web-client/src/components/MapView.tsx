@@ -14,16 +14,18 @@ import { useToast } from './Toast';
 import { DataFileSelector } from './DataFileSelector';
 import { DataInspector } from './DataInspector';
 import { LRUCache } from '../utils/LRUCache';
-import type { VariableInfo, VariableStats } from '../types/api';
+import { usePrefetch } from '../utils/dataPreloader';
+import type { EtlStatus, VariableInfo, VariableStats } from '../types/api';
 import type { Feature, FeatureCollection, LineString } from 'geojson';
 
 interface MapViewProps {
   currentTimeIndex: number;
+  timePointCount?: number;
   isPreview?: boolean;
   onDataFileChange?: () => void;
 }
 
-const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange }) => {
+const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0, isPreview = false, onDataFileChange }) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const [lng] = useState(121.0);
@@ -47,8 +49,9 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
   const [legendColormap, setLegendColormap] = useState<string>('rdylbu_r');
   const [windLayer, setWindLayer] = useState<WebGLWindLayer | null>(null);
 
-  const statsCacheRef = useRef(new LRUCache<string, { valueRange: [number, number] }>(50));
+  const statsCacheRef = useRef(new LRUCache<string, VariableStats>(50));
   const cogManifestRef = useRef<Record<string, string[]>>({});
+  const fallbackToastShownRef = useRef(false);
 
   const [windFadeOpacity, setWindFadeOpacity] = useState(0.97);
   const [windSpeedFactor, setWindSpeedFactor] = useState(0.4);
@@ -63,6 +66,8 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
     if (map.current.getLayer(layerId)) map.current.removeLayer(layerId);
     if (map.current.getSource(sourceId)) map.current.removeSource(sourceId);
   };
+
+  usePrefetch(currentTimeIndex, timePointCount, selectedVariable, mapLoaded && !isPreview && timePointCount > 0);
 
   const ensureWindOnTop = useCallback(() => {
     if (!map.current?.getLayer('wind-particles')) return;
@@ -147,6 +152,30 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
     } catch (err) { console.warn(err); }
   }, [mapLoaded]);
 
+  const pollEtlUntilDone = useCallback(() => {
+    const poll = async (attempt = 0) => {
+      if (attempt > 120) return;
+      try {
+        const res = await fetch('/api/etl/status');
+        const status: EtlStatus = await res.json();
+        if (status.running) {
+          window.setTimeout(() => poll(attempt + 1), 3000);
+          return;
+        }
+        if (status.files_created > 0) {
+          showToast(`COG 轉檔完成（${status.files_created} 檔）`, 'success');
+          fetchCogManifest();
+          setDataRefreshKey((k) => k + 1);
+        } else if (status.last_error) {
+          showToast('COG 轉檔失敗，已改用動態圖磚', 'error');
+        }
+      } catch {
+        /* ignore poll errors */
+      }
+    };
+    poll();
+  }, [fetchCogManifest, showToast]);
+
   useEffect(() => {
     fetch('/api/variables').then(res => res.json()).then(setVariables).catch(console.error);
     fetchCogManifest();
@@ -176,17 +205,49 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
       setValueRange([vmin, vmax]);
       setLegendColormap(stats.colormap ?? 'viridis');
       
+      removeLayerAndSource('weather-raster-layer', 'weather-raster-source');
       const paths = cogManifestRef.current[bgVariable];
+      const colormap = (stats.colormap ?? 'viridis').toLowerCase();
+
       if (paths && paths.length > 0) {
-        const params = new URLSearchParams({ url: paths[Math.min(currentTimeIndex, paths.length - 1)], rescale: `${vmin},${vmax}`, colormap_name: (stats.colormap ?? 'viridis').toLowerCase(), return_mask: 'true' });
-        removeLayerAndSource('weather-raster-layer', 'weather-raster-source');
-        map.current!.addSource('weather-raster-source', { type: 'raster', tiles: [`/tiles/cog/tiles/WebMercatorQuad/{z}/{x}/{y}?${params}`], tileSize: 256, minzoom: 0, maxzoom: 12 });
-        map.current!.addLayer(
-          { id: 'weather-raster-layer', type: 'raster', source: 'weather-raster-source', paint: { 'raster-opacity': layerOpacity, 'raster-resampling': 'linear' } },
-          'wind-particles'
-        );
-        ensureWindOnTop();
+        const params = new URLSearchParams({
+          url: paths[Math.min(currentTimeIndex, paths.length - 1)],
+          rescale: `${vmin},${vmax}`,
+          colormap_name: colormap,
+          return_mask: 'true',
+        });
+        map.current!.addSource('weather-raster-source', {
+          type: 'raster',
+          tiles: [`/tiles/cog/tiles/WebMercatorQuad/{z}/{x}/{y}?${params}`],
+          tileSize: 256,
+          minzoom: 0,
+          maxzoom: 12,
+        });
+      } else {
+        const params = new URLSearchParams({
+          variable: bgVariable,
+          time: String(currentTimeIndex),
+          vmin: String(vmin),
+          vmax: String(vmax),
+        });
+        map.current!.addSource('weather-raster-source', {
+          type: 'raster',
+          tiles: [`/api/tiles/{z}/{x}/{y}?${params}`],
+          tileSize: 256,
+          minzoom: 0,
+          maxzoom: 12,
+        });
+        if (!fallbackToastShownRef.current) {
+          showToast('COG 未就緒，使用動態圖磚渲染', 'info');
+          fallbackToastShownRef.current = true;
+        }
       }
+
+      map.current!.addLayer(
+        { id: 'weather-raster-layer', type: 'raster', source: 'weather-raster-source', paint: { 'raster-opacity': layerOpacity, 'raster-resampling': 'linear' } },
+        'wind-particles'
+      );
+      ensureWindOnTop();
       setIsDataLoading(false);
     };
 
@@ -256,7 +317,14 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, onDataFileChange })
         variableName={legendVar?.name || ''} 
       />
       <LoadingOverlay isLoading={isDataLoading} message="載入數據中..." />
-      <DataFileSelector onFileChange={() => { statsCacheRef.current.clear(); setDataRefreshKey(k => k + 1); fetchCogManifest(); onDataFileChange?.(); }} />
+      <DataFileSelector onFileChange={() => {
+        statsCacheRef.current.clear();
+        fallbackToastShownRef.current = false;
+        setDataRefreshKey((k) => k + 1);
+        fetchCogManifest();
+        pollEtlUntilDone();
+        onDataFileChange?.();
+      }} />
       <SearchBar onCoordinates={(lt, ln) => map.current?.flyTo({ center: [ln, lt], zoom: 8 })} />
       <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
       {variables.length > 0 && (

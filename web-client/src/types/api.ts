@@ -42,3 +42,10 @@ export interface CogManifest {
   bounds?: [number, number, number, number];
 }
 
+export interface EtlStatus {
+  running: boolean;
+  last_path: string | null;
+  last_error: string | null;
+  files_created: number;
+}
+

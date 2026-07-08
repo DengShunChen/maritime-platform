@@ -40,13 +40,12 @@ class DataPreloader {
    * Prefetch stats for a specific time index.
    * Tiles are served by TiTiler directly — no need to warm a separate tile cache.
    */
-  prefetchTimePoint(
-    timeIndex: number,
-    variable: string
-  ): void {
-    // Only prefetch stats; TiTiler handles tile caching internally
+  prefetchTimePoint(timeIndex: number, variable: string): void {
     const statsUrl = `/api/variable_stats?time=${timeIndex}&variable=${variable}`;
     this.prefetch(statsUrl, 'low');
+    // Warm dynamic tile cache when COG is missing (center tile at z=4)
+    const tileUrl = `/api/tiles/4/13/6?variable=${variable}&time=${timeIndex}&vmin=-20&vmax=40`;
+    this.prefetch(tileUrl, 'low');
   }
 
   /**

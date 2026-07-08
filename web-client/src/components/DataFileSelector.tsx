@@ -67,7 +67,7 @@ export const DataFileSelector: React.FC<DataFileSelectorProps> = ({ onFileChange
       
       const data = await response.json();
       setCurrentFile(data.current);
-      
+
       // Update file list to reflect new selection
       setFiles(prev => prev.map(f => ({
         ...f,

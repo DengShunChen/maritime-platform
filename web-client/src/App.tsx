@@ -185,6 +185,7 @@ const App: React.FC = () => {
     <div className="App">
       <MapView
         currentTimeIndex={effectiveTimeIndex}
+        timePointCount={timePoints.length}
         isPreview={previewTimeIndex !== null}
         onDataFileChange={handleDataFileChange}
       />

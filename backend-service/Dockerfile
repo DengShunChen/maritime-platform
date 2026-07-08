@@ -35,5 +35,10 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:5000/health || exit 1
 
-CMD ["gunicorn", "--log-file", "-", "--access-logfile", "-", "--log-level", "info", \
-     "--workers", "2", "--timeout", "60", "-b", "0.0.0.0:5000", "app_v2:app"]
+ENV GUNICORN_WORKERS=1
+
+USER root
+RUN chmod +x /app/docker-entrypoint.sh && chown appuser:appgroup /app/docker-entrypoint.sh
+USER appuser
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

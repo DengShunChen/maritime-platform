@@ -34,16 +34,19 @@ void main() {
     vec2 velocity = mix(u_wind_min, u_wind_max, wind_sample);
     float speed = length(velocity);
     
-    // Move particle based on velocity
-    // Note: Implicit assumption that grid is roughly uniform physically (Lambert)
-    // So U/V (m/s) map directly to X/Y grid delta
+    // Move particle based on velocity (texture UV space)
     vec2 offset = velocity * 0.00005 * u_speed_factor;
-    
-    // Wrap position to [0, 1]
-    pos = fract(1.0 + pos + offset);
+    pos = pos + offset;
+
+    // Domain margin — respawn instead of wrapping (finite-area WRF domain)
+    const float margin = 0.02;
+    vec2 seed = (pos + v_tex_pos) * u_rand_seed;
+    if (pos.x < margin || pos.x > 1.0 - margin || pos.y < margin || pos.y > 1.0 - margin) {
+        pos = vec2(rand(seed + 1.3), rand(seed + 2.1));
+        pos = margin + pos * (1.0 - 2.0 * margin);
+    }
     
     // Random particle reset to prevent accumulation
-    vec2 seed = (pos + v_tex_pos) * u_rand_seed;
     
     // Faster particles have higher reset probability
     float speed_normalized = speed / length(u_wind_max);
