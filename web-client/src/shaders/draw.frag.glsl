@@ -1,6 +1,4 @@
-// Draw fragment shader - Windy.com-style particle rendering
-// Soft radial falloff with glow effect
-// Particles outside data bounds are discarded
+// Draw fragment shader - Windy.com-style particle trail rendering
 precision mediump float;
 
 uniform sampler2D u_wind;
@@ -18,28 +16,14 @@ void main() {
         discard;
     }
     
-    // Calculate distance from center of point sprite (0.0 = center, 1.0 = edge)
-    vec2 point_coord = gl_PointCoord - vec2(0.5);
-    float dist = length(point_coord) * 2.0;
-    
-    // Discard pixels outside the circle
-    if (dist > 1.0) {
-        discard;
-    }
-    
-    // SHARPER falloff for Windy-style "hair" lines
-    // Old: smoothstep(0.0, 1.0, dist) -> very fuzzy
-    // New: smoothstep(0.7, 1.0, dist) -> crisper edge, softer center
-    float alpha = 1.0 - smoothstep(0.7, 1.0, dist);
-    
     // Speed-based color from ramp texture (Windy-style)
     vec3 wColor = texture2D(u_color_ramp, vec2(v_speed_t, 0.5)).rgb;
     
     // Faster particles are brighter/more opaque
-    float velocity_alpha = 0.5 + v_speed_t * 0.5;
+    float velocity_alpha = 0.78 + v_speed_t * 0.22;
     
     vec3 final_color = wColor;
-    float final_alpha = alpha * velocity_alpha;
+    float final_alpha = velocity_alpha;
     
     // Very transparent particles should not be rendered
     if (final_alpha < 0.01) {

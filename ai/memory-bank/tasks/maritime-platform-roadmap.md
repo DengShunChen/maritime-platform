@@ -18,11 +18,12 @@
 - Script verifies dynamic tile generation (`/tiles/z/x/y`) and handles matplotlib thread safety checks.
 - Build fails if the script exits with code 1.
 
-### [ ] Task 2.2: Matplotlib Thread-Safety Hardening
+### [x] Task 2.2: Matplotlib Thread-Safety Hardening
 **Description**: Matplotlib is not thread-safe. Concurrent tile requests from the frontend cause 500 errors. We need to implement a robust locking mechanism or move to a process-pool/headless renderer for tiles before adding caching.
 **Acceptance Criteria**:
-- `backend-service/app_v2.py` uses a `threading.Lock()` around all `plt.subplots()` and `ax.pcolormesh()` calls.
-- Load test with 50 concurrent tile requests passes without 500 errors.
+- `backend-service/app_v2.py` uses a `threading.Lock()` around dynamic tile rendering.
+- CI contract coverage includes concurrent `/tiles` requests via `test_dynamic_tiles_survive_concurrent_requests`.
+- Direct load test passed on 2026-09-03: `BACKEND_URL=http://127.0.0.1:5055 .venv311/bin/python backend-service/scripts/load_test_tiles.py --warmup 6 -c 50 -n 50 --variable T2 --time 0` returned `OK: 50/50 FAIL: 0`.
 
 ### [ ] Task 2.3: Frontend Error Boundary & Graceful Degradation
 **Description**: If a tile fails to load, the entire map shouldn't go black. The UI needs to handle API 404/500 errors gracefully.

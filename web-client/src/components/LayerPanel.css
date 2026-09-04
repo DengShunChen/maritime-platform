@@ -85,6 +85,36 @@
   margin-bottom: 12px;
 }
 
+.category-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--button-radius);
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.category-tab {
+  min-height: 28px;
+  border-radius: var(--button-radius);
+  background: transparent;
+  color: var(--windy-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.category-tab:hover {
+  color: var(--windy-text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.category-tab.active {
+  color: #fff;
+  background: rgba(69, 162, 158, 0.65);
+}
+
 /* Variable Grid */
 .variable-grid {
   display: grid;
@@ -98,7 +128,8 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 10px 4px;
+  min-height: 76px;
+  padding: 9px 4px;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid transparent;
   border-radius: var(--button-radius);
@@ -118,13 +149,48 @@
   color: var(--windy-accent-alt);
 }
 
+.variable-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.variable-item.disabled:hover {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: transparent;
+  color: var(--windy-text-dim);
+}
+
 .item-icon {
-  font-size: 20px;
+  min-width: 30px;
+  min-height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--windy-accent-alt);
+  font-size: 15px;
+  font-weight: 900;
+  font-family: var(--font-mono);
 }
 
 .item-label {
   font-size: 11px;
   font-weight: 500;
+  text-align: center;
+}
+
+.item-unavailable {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--windy-text-muted);
+}
+
+.category-empty {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: var(--button-radius);
+  color: var(--windy-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
   text-align: center;
 }
 
@@ -168,5 +234,41 @@
 
 .variable-tooltip .units {
   font-size: 10px;
+  color: var(--windy-text-muted);
+}
+
+/* Level Selector Styling */
+.level-selector-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 8px;
+  border-radius: var(--button-radius);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  margin-bottom: 12px;
+}
+
+.level-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--windy-text);
+  display: flex;
+  justify-content: space-between;
+}
+
+.level-slider {
+  width: 100%;
+  accent-color: var(--windy-accent-alt);
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.level-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
   color: var(--windy-text-muted);
 }

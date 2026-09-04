@@ -1,5 +1,18 @@
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.8.4
 
+ARG BUILD_VERSION=dev
+ARG BUILD_SHA=unknown
+ARG BUILD_DATE=unknown
+
+LABEL org.opencontainers.image.title="Maritime Platform Backend" \
+      org.opencontainers.image.version="${BUILD_VERSION}" \
+      org.opencontainers.image.revision="${BUILD_SHA}" \
+      org.opencontainers.image.created="${BUILD_DATE}"
+
+ENV BUILD_VERSION=$BUILD_VERSION
+ENV BUILD_SHA=$BUILD_SHA
+ENV BUILD_DATE=$BUILD_DATE
+
 # Install Python and system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
@@ -33,7 +46,7 @@ USER appuser
 EXPOSE 5000
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:5000/health || exit 1
+  CMD curl -f http://localhost:5000/ready || exit 1
 
 ENV GUNICORN_WORKERS=1
 

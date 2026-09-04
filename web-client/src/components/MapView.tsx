@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-import { WebGLWindLayer } from './WebGLWindLayer';
+import { WindLayer } from './WindLayer';
 import { LayerPanel } from './LayerPanel';
 import { ColorLegend } from './ColorLegend';
 import { SearchBar } from './SearchBar';
@@ -13,6 +13,7 @@ import { LoadingOverlay } from './LoadingOverlay';
 import { useToast } from './Toast';
 import { DataFileSelector } from './DataFileSelector';
 import { DataInspector } from './DataInspector';
+import { ForecastStatus } from './ForecastStatus';
 import { LRUCache } from '../utils/LRUCache';
 import { usePrefetch } from '../utils/dataPreloader';
 import type { EtlStatus, VariableInfo, VariableStats } from '../types/api';
@@ -32,13 +33,19 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
   const [lat] = useState(24.0);
   const [zoom] = useState(3);
   const [mapLoaded, setMapLoaded] = useState(false);
-  
+
   const [variables, setVariables] = useState<VariableInfo[]>([]);
   const [selectedVariable, setSelectedVariable] = useState('T2');
+  const [selectedLevel, setSelectedLevel] = useState(0);
   const [showWind, setShowWind] = useState(true);
   const [isWindAvailable, setIsWindAvailable] = useState(false);
   const [showContours, setShowContours] = useState(true);
-  
+
+  const handleVariableChange = (varId: string) => {
+    setSelectedVariable(varId);
+    setSelectedLevel(0);
+  };
+
   const [hoverData, setHoverData] = useState<{ value: number, direction?: number, units: string, variable: string } | null>(null);
   const [hoverPos, setHoverPos] = useState<{ lat: number, lon: number } | null>(null);
   const [isDataLoading, setIsDataLoading] = useState(false);
@@ -47,17 +54,17 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
 
   const [valueRange, setValueRange] = useState<[number, number]>([0, 100]);
   const [legendColormap, setLegendColormap] = useState<string>('rdylbu_r');
-  const [windLayer, setWindLayer] = useState<WebGLWindLayer | null>(null);
+  const [windLayer, setWindLayer] = useState<WindLayer | null>(null);
 
   const statsCacheRef = useRef(new LRUCache<string, VariableStats>(50));
   const cogManifestRef = useRef<Record<string, string[]>>({});
   const fallbackToastShownRef = useRef(false);
 
-  const [windFadeOpacity, setWindFadeOpacity] = useState(0.97);
-  const [windSpeedFactor, setWindSpeedFactor] = useState(0.4);
-  const [windParticleSize, setWindParticleSize] = useState(4.0);
-  const [windColorScheme, setWindColorScheme] = useState('viridis');
-  const [layerOpacity, setLayerOpacity] = useState(0.85);
+  const [windFadeOpacity, setWindFadeOpacity] = useState(0.985);
+  const [windSpeedFactor, setWindSpeedFactor] = useState(0.9);
+  const [windParticleSize, setWindParticleSize] = useState(2.0);
+  const [windColorScheme, setWindColorScheme] = useState('windy');
+  const [layerOpacity, setLayerOpacity] = useState(0.68);
 
   const [clickedCoord, setClickedCoord] = useState<{ lat: number; lon: number; x: number; y: number; } | null>(null);
 
@@ -70,8 +77,7 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
   usePrefetch(currentTimeIndex, timePointCount, selectedVariable, mapLoaded && !isPreview && timePointCount > 0);
 
   const ensureWindOnTop = useCallback(() => {
-    if (!map.current?.getLayer('wind-particles')) return;
-    map.current.moveLayer('wind-particles');
+    // Canvas wind overlay sits above the MapLibre canvas by z-index.
   }, []);
 
   useEffect(() => {
@@ -95,20 +101,12 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
       for (let lt = -80; lt <= 80; lt += 10) {
         lines.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[-180, lt], [180, lt]] } });
       }
-      
+
       map.current.addSource('graticule-source', { type: 'geojson', data: { type: 'FeatureCollection', features: lines } });
       map.current.addLayer({ id: 'graticule-layer', type: 'line', source: 'graticule-source', paint: { 'line-color': 'rgba(255,255,255,0.1)', 'line-width': 1, 'line-dasharray': [2, 2] } });
 
-      const wind = new WebGLWindLayer({
-        id: 'wind-particles',
-        numParticles: 65536,
-        fadeOpacity: 0.97,
-        speedFactor: 0.4,
-        dropRate: 0.003,
-        dropRateBump: 0.01,
-        particleSize: 4.0
-      });
-      map.current.addLayer(wind);
+      const wind = new WindLayer(map.current);
+      wind.setParams({ fadeOpacity: 0.985, speedFactor: 0.9, particleSize: 2.0 });
       setWindLayer(wind);
       setMapLoaded(true);
     });
@@ -177,36 +175,53 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
   }, [fetchCogManifest, showToast]);
 
   useEffect(() => {
-    fetch('/api/variables').then(res => res.json()).then(setVariables).catch(console.error);
+    fetch('/api/variables')
+      .then(res => res.json())
+      .then((data: VariableInfo[]) => {
+        setVariables(data);
+        const selected = data.find((variable) => variable.id === selectedVariable);
+        if (selected?.available === false) {
+          const fallback = data.find((variable) => variable.available !== false);
+          if (fallback) setSelectedVariable(fallback.id);
+        }
+      })
+      .catch(console.error);
     fetchCogManifest();
     checkWindAvailable();
-  }, [fetchCogManifest, checkWindAvailable]);
+  }, [fetchCogManifest, checkWindAvailable, selectedVariable, dataRefreshKey]);
 
   useEffect(() => {
     if (!mapLoaded || !map.current) return;
     setIsDataLoading(true);
 
+    let active = true;
+
     if (showWind && isWindAvailable && windLayer) {
-      windLayer.loadWindData(currentTimeIndex).then(() => windLayer.start()).catch(() => {
-        showToast('風場載入失敗，功能暫停', 'error');
-        setShowWind(false);
+      windLayer.loadWindData(currentTimeIndex, selectedLevel).then(() => {
+        if (active) windLayer.start();
+      }).catch(() => {
+        if (active) {
+          showToast('風場載入失敗，功能暫停', 'error');
+          setShowWind(false);
+        }
       });
     } else if (windLayer) {
       windLayer.stop();
     }
 
     const bgVariable = selectedVariable;
-    const statsUrl = `/api/variable_stats?time=${currentTimeIndex}&variable=${bgVariable}`;
+    const statsUrl = `/api/variable_stats?time=${currentTimeIndex}&variable=${bgVariable}&level=${selectedLevel}`;
 
     const applyWithStats = (stats: VariableStats) => {
+      if (!active || !map.current) return;
       const [rawMin, rawMax] = stats.valueRange;
       const vmin = selectedVariable === 'PSFC' ? 980 : (selectedVariable === 'T2' ? -20 : rawMin);
       const vmax = selectedVariable === 'PSFC' ? 1030 : (selectedVariable === 'T2' ? 40 : rawMax);
       setValueRange([vmin, vmax]);
       setLegendColormap(stats.colormap ?? 'viridis');
-      
+
       removeLayerAndSource('weather-raster-layer', 'weather-raster-source');
-      const paths = cogManifestRef.current[bgVariable];
+      const paths = selectedLevel === 0 ? cogManifestRef.current[bgVariable] : undefined;
       const colormap = (stats.colormap ?? 'viridis').toLowerCase();
 
       if (paths && paths.length > 0) {
@@ -229,6 +244,7 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
           time: String(currentTimeIndex),
           vmin: String(vmin),
           vmax: String(vmax),
+          level: String(selectedLevel),
         });
         map.current!.addSource('weather-raster-source', {
           type: 'raster',
@@ -237,7 +253,7 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
           minzoom: 0,
           maxzoom: 12,
         });
-        if (!fallbackToastShownRef.current) {
+        if (!fallbackToastShownRef.current && selectedLevel === 0) {
           showToast('COG 未就緒，使用動態圖磚渲染', 'info');
           fallbackToastShownRef.current = true;
         }
@@ -245,7 +261,7 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
 
       map.current!.addLayer(
         { id: 'weather-raster-layer', type: 'raster', source: 'weather-raster-source', paint: { 'raster-opacity': layerOpacity, 'raster-resampling': 'linear' } },
-        'wind-particles'
+        map.current.getLayer('wind-particles') ? 'wind-particles' : undefined
       );
       ensureWindOnTop();
       setIsDataLoading(false);
@@ -255,36 +271,67 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
     if (cached) applyWithStats(cached);
     else {
       fetch(statsUrl).then(res => res.json()).then(data => {
+        if (!active) return;
         if (data.error) throw new Error(data.error);
         statsCacheRef.current.set(statsUrl, data);
         applyWithStats(data);
-      }).catch(() => { setIsDataLoading(false); showToast('資料載入失敗', 'error'); });
+      }).catch(() => {
+        if (active) {
+          setIsDataLoading(false);
+          showToast('資料載入失敗', 'error');
+        }
+      });
     }
-  }, [currentTimeIndex, selectedVariable, mapLoaded, windLayer, showWind, isWindAvailable, dataRefreshKey, layerOpacity, showToast, ensureWindOnTop]);
+
+    return () => {
+      active = false;
+    };
+  }, [currentTimeIndex, selectedVariable, selectedLevel, mapLoaded, windLayer, showWind, isWindAvailable, dataRefreshKey, layerOpacity, showToast, ensureWindOnTop]);
 
   useEffect(() => {
     if (!mapLoaded || !map.current) return;
-    removeLayerAndSource('contour-layer', 'contour-source');
+
+    let active = true;
+
     if (map.current.getLayer('contour-labels')) map.current.removeLayer('contour-labels');
+    removeLayerAndSource('contour-layer', 'contour-source');
+
     if (!showContours) return;
 
-    const contourVar = (selectedVariable === 'PSFC' || selectedVariable === 'T2') ? selectedVariable : 'PSFC';
-    fetch(`/api/contours?variable=${contourVar}&time=${currentTimeIndex}`)
+    let contourVar = 'PSFC';
+    if (selectedVariable === 'T2' || selectedVariable === 'T_LEV') {
+      contourVar = selectedVariable;
+    } else if (selectedVariable === 'P_HYD') {
+      contourVar = 'P_HYD';
+    } else if (selectedVariable === 'PSFC') {
+      contourVar = 'PSFC';
+    }
+    fetch(`/api/contours?variable=${contourVar}&time=${currentTimeIndex}&level=${selectedLevel}`)
       .then(res => res.json())
       .then((data: FeatureCollection) => {
-        if (!map.current) return;
+        if (!active || !map.current) return;
+
+        if (map.current.getSource('contour-source')) {
+          if (map.current.getLayer('contour-labels')) map.current.removeLayer('contour-labels');
+          removeLayerAndSource('contour-layer', 'contour-source');
+        }
+
         map.current.addSource('contour-source', { type: 'geojson', data });
         map.current.addLayer(
           { id: 'contour-layer', type: 'line', source: 'contour-source', paint: { 'line-color': 'rgba(255,255,255,0.3)', 'line-width': 1 } },
-          'wind-particles'
+          map.current.getLayer('wind-particles') ? 'wind-particles' : undefined
         );
         map.current.addLayer(
           { id: 'contour-labels', type: 'symbol', source: 'contour-source', layout: { 'symbol-placement': 'line', 'text-field': ['get', 'value'], 'text-size': 10 }, paint: { 'text-color': '#fff', 'text-halo-color': 'rgba(0,0,0,0.5)', 'text-halo-width': 1 } },
-          'wind-particles'
+          map.current.getLayer('wind-particles') ? 'wind-particles' : undefined
         );
         ensureWindOnTop();
       });
-  }, [mapLoaded, currentTimeIndex, selectedVariable, showContours, ensureWindOnTop]);
+
+    return () => {
+      active = false;
+    };
+  }, [mapLoaded, currentTimeIndex, selectedVariable, selectedLevel, showContours, ensureWindOnTop]);
 
   useEffect(() => {
     if (!mapLoaded || !map.current) return;
@@ -294,13 +341,14 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
       const now = Date.now();
       if (now - lastProbe < 150) return;
       lastProbe = now;
-      fetch(`/api/probe?lat=${e.lngLat.lat}&lon=${e.lngLat.lng}&variable=${selectedVariable === 'WIND' ? 'WSPD' : selectedVariable}&time=${currentTimeIndex}`)
+      const targetVar = selectedVariable === 'WIND' ? 'WSPD' : selectedVariable;
+      fetch(`/api/probe?lat=${e.lngLat.lat}&lon=${e.lngLat.lng}&variable=${targetVar}&time=${currentTimeIndex}&level=${selectedLevel}`)
         .then(res => res.json()).then(data => { if (!data.error) setHoverData(data); });
     };
     map.current.on('mousemove', handleMouseMove);
     map.current.on('mouseleave', () => { setHoverPos(null); setHoverData(null); });
     return () => { map.current?.off('mousemove', handleMouseMove); };
-  }, [mapLoaded, selectedVariable, currentTimeIndex]);
+  }, [mapLoaded, selectedVariable, selectedLevel, currentTimeIndex]);
 
   useEffect(() => { if (windLayer) windLayer.setParams({ fadeOpacity: windFadeOpacity, speedFactor: windSpeedFactor, particleSize: windParticleSize }); }, [windLayer, windFadeOpacity, windSpeedFactor, windParticleSize]);
   useEffect(() => { if (windLayer) windLayer.setColorScheme(windColorScheme); }, [windLayer, windColorScheme]);
@@ -309,12 +357,18 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
 
   return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
-      <DataInspector 
-        lat={hoverPos?.lat ?? null} lon={hoverPos?.lon ?? null} 
-        value={hoverData?.value ?? null} 
+      <DataInspector
+        lat={hoverPos?.lat ?? null} lon={hoverPos?.lon ?? null}
+        value={hoverData?.value ?? null}
         direction={hoverData?.direction ?? null}
-        units={hoverData?.units ?? ''} 
-        variableName={legendVar?.name || ''} 
+        units={hoverData?.units ?? ''}
+        variableName={legendVar?.name || ''}
+      />
+      <ForecastStatus
+        currentTimeIndex={currentTimeIndex}
+        timePointCount={timePointCount}
+        selectedVariableName={legendVar?.name || selectedVariable}
+        refreshKey={dataRefreshKey}
       />
       <LoadingOverlay isLoading={isDataLoading} message="載入數據中..." />
       <DataFileSelector onFileChange={() => {
@@ -329,18 +383,19 @@ const MapView: React.FC<MapViewProps> = ({ currentTimeIndex, timePointCount = 0,
       <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
       {variables.length > 0 && (
         <>
-          <LayerPanel 
-            variables={variables} selectedVariable={selectedVariable} onVariableChange={setSelectedVariable} 
+          <LayerPanel
+            variables={variables} selectedVariable={selectedVariable} onVariableChange={handleVariableChange}
             showWind={showWind} onToggleWind={setShowWind} isWindAvailable={isWindAvailable}
-            showContours={showContours} onToggleContours={setShowContours} 
+            showContours={showContours} onToggleContours={setShowContours}
             layerOpacity={layerOpacity} onOpacityChange={setLayerOpacity}
+            selectedLevel={selectedLevel} onLevelChange={setSelectedLevel}
           />
           <ColorLegend variable={selectedVariable} variableName={legendVar?.name || ''} units={legendVar?.units || ''} valueRange={valueRange} colormap={legendColormap} />
         </>
       )}
       <WindControls visible={showWind && isWindAvailable} fadeOpacity={windFadeOpacity} speedFactor={windSpeedFactor} particleSize={windParticleSize} colorScheme={windColorScheme} onFadeOpacityChange={setWindFadeOpacity} onSpeedFactorChange={setWindSpeedFactor} onParticleSizeChange={setWindParticleSize} onColorSchemeChange={setWindColorScheme} />
       <ExportButton mapRef={map} getWindCanvas={() => windLayer?.getCanvas() || null} />
-      {clickedCoord && <CoordinatePopup lat={clickedCoord.lat} lon={clickedCoord.lon} x={clickedCoord.x} y={clickedCoord.y} variable={selectedVariable} timeIndex={currentTimeIndex} onClose={() => setClickedCoord(null)} onCopy={() => { navigator.clipboard.writeText(`${clickedCoord.lat}, ${clickedCoord.lon}`); showToast('座標已複製', 'success'); }} />}
+      {clickedCoord && <CoordinatePopup lat={clickedCoord.lat} lon={clickedCoord.lon} x={clickedCoord.x} y={clickedCoord.y} variable={selectedVariable} timeIndex={currentTimeIndex} level={selectedLevel} onClose={() => setClickedCoord(null)} onCopy={() => { navigator.clipboard.writeText(`${clickedCoord.lat}, ${clickedCoord.lon}`); showToast('座標已複製', 'success'); }} />}
     </div>
   );
 };

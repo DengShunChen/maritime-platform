@@ -14,7 +14,9 @@ Output structure:
 """
 
 import logging
+import os
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import rasterio
@@ -95,6 +97,54 @@ VARIABLE_CONFIG: dict[str, dict] = {
         "offset": 0.0,
         "units": "m/s",
     },
+    "SST": {
+        "wrf_name": "SST",
+        "grib_candidates": ["sst", "SSTK", "sea_surface_temperature"],
+        "grib_level": "surface",
+        "scale": 1.0,
+        "offset": -273.15,
+        "units": "°C",
+    },
+    "WAVE_HS": {
+        "wrf_name": "WAVE_HS",
+        "grib_candidates": ["swh", "HTSGW", "VHM0"],
+        "grib_level": "surface",
+        "scale": 1.0,
+        "offset": 0.0,
+        "units": "m",
+    },
+    "WAVE_TP": {
+        "wrf_name": "WAVE_TP",
+        "grib_candidates": ["pp1d", "PERPW"],
+        "grib_level": "surface",
+        "scale": 1.0,
+        "offset": 0.0,
+        "units": "s",
+    },
+    "WAVE_DIR": {
+        "wrf_name": "WAVE_DIR",
+        "grib_candidates": ["mwd", "DIRPW", "VMDR"],
+        "grib_level": "surface",
+        "scale": 1.0,
+        "offset": 0.0,
+        "units": "°",
+    },
+    "CURRENT_SPD": {
+        "wrf_name": None,  # Derived: sqrt(CURRENT_U^2 + CURRENT_V^2)
+        "grib_candidates": [],
+        "grib_level": "surface",
+        "scale": 1.0,
+        "offset": 0.0,
+        "units": "m/s",
+    },
+    "SSH": {
+        "wrf_name": "SSH",
+        "grib_candidates": ["zos", "tide"],
+        "grib_level": "surface",
+        "scale": 1.0,
+        "offset": 0.0,
+        "units": "m",
+    },
 }
 
 NODATA = -9999.0
@@ -114,7 +164,7 @@ def _get_wrf_crs_and_transform(ds: xr.Dataset) -> tuple[CRS, Affine]:
     proj_id = ds.attrs.get("MAP_PROJ", 1)
     # Earth radius in WRF is typically a perfect sphere of 6370000 m
     a = b = ds.attrs.get("CEN_A", 6370000.0)
-    
+
     if proj_id == 1:
         # Lambert Conformal Conic
         crs = CRS.from_dict({
@@ -189,64 +239,108 @@ def _write_cog(arr: np.ndarray, crs: CRS, transform: Affine, out_path: Path) -> 
 def _is_wrf(ds: xr.Dataset) -> bool:
     return "XLAT" in ds and "XLONG" in ds
 
+def _isel_time(da: xr.DataArray, t_idx: int) -> xr.DataArray:
+    for dim in ("Time", "time", "valid_time", "step"):
+        if dim in da.dims:
+            return da.isel({dim: min(t_idx, da.sizes[dim] - 1)})
+    return da
+
+
+def _convert_wrf_slice(
+    nc_path: Path,
+    cog_root: Path,
+    var_id: str,
+    t_idx: int,
+    crs: CRS,
+    transform: Affine,
+) -> Path | None:
+    try:
+        with xr.open_dataset(str(nc_path)) as ds:
+            cfg = VARIABLE_CONFIG[var_id]
+            out_path = cog_root / var_id / f"{nc_path.stem}_t{t_idx}.tif"
+
+            if var_id == "WSPD":
+                if "U10" not in ds or "V10" not in ds:
+                    return None
+                u = _isel_time(ds["U10"], t_idx).values.astype("float64")
+                v = _isel_time(ds["V10"], t_idx).values.astype("float64")
+                arr = np.sqrt(u**2 + v**2)
+            elif var_id == "CURRENT_SPD":
+                u_name = next((name for name in ("CURRENT_U", "UO", "uo", "water_u", "sea_water_x_velocity") if name in ds), None)
+                v_name = next((name for name in ("CURRENT_V", "VO", "vo", "water_v", "sea_water_y_velocity") if name in ds), None)
+                if not u_name or not v_name:
+                    return None
+                u = _isel_time(ds[u_name], t_idx).values.astype("float64")
+                v = _isel_time(ds[v_name], t_idx).values.astype("float64")
+                arr = np.sqrt(u**2 + v**2)
+            else:
+                wrf_name = cfg["wrf_name"]
+                if wrf_name not in ds:
+                    wrf_name = next((name for name in cfg.get("grib_candidates", []) if name in ds), None)
+                    if not wrf_name:
+                        return None
+                arr = _isel_time(ds[wrf_name], t_idx).values.astype("float64")
+                arr = arr * cfg["scale"] + cfg["offset"]
+
+            arr = np.where(np.isfinite(arr), arr, NODATA).astype("float32")
+            arr = np.flipud(arr)
+            _write_cog(arr, crs, transform, out_path)
+            return out_path
+    except Exception as exc:
+        logger.error("Failed converting %s time %d: %s", var_id, t_idx, exc, exc_info=True)
+        return None
 
 def convert_wrf_file(nc_path: str, cog_root: str) -> list[Path]:
     """Convert a WRF NetCDF file → properly georeferenced COG per variable per time step."""
     nc_path = Path(nc_path)
     cog_root = Path(cog_root)
-    created: list[Path] = []
     stem = nc_path.stem
 
     logger.info("Opening WRF NetCDF: %s …", nc_path.name)
-    ds = xr.open_dataset(str(nc_path))
+    with xr.open_dataset(str(nc_path)) as ds:
+        n_times = next((int(ds.sizes[dim]) for dim in ("Time", "time", "valid_time", "step") if dim in ds.sizes), 1)
+        src_height = ds.sizes["south_north"]
+        src_width = ds.sizes["west_east"]
+        crs, transform = _get_wrf_crs_and_transform(ds)
 
-    n_times = ds.dims.get("Time", 1)
-    src_height = ds.sizes["south_north"]
-    src_width = ds.sizes["west_east"]
+        # Build tasks list
+        tasks = []
+        for var_id, cfg in VARIABLE_CONFIG.items():
+            if var_id == "WSPD":
+                has_var = "U10" in ds and "V10" in ds
+            elif var_id == "CURRENT_SPD":
+                has_var = any(name in ds for name in ("CURRENT_U", "UO", "uo", "water_u", "sea_water_x_velocity")) and any(name in ds for name in ("CURRENT_V", "VO", "vo", "water_v", "sea_water_y_velocity"))
+            else:
+                has_var = cfg["wrf_name"] in ds or any(name in ds for name in cfg.get("grib_candidates", []))
+            if not has_var:
+                continue
+            for t_idx in range(n_times):
+                tasks.append((var_id, t_idx))
 
-    crs, transform = _get_wrf_crs_and_transform(ds)
     logger.info("Grid %dx%d, %d time step(s), CRS: %s",
                 src_width, src_height, n_times, crs.to_string())
 
-    for var_id, cfg in VARIABLE_CONFIG.items():
-        wrf_name = cfg["wrf_name"]
+    created: list[Path] = []
+    max_workers = int(os.getenv("ETL_WORKERS", "1"))
 
-        # ── Derived WSPD ──────────────────────────────────────────────────────
-        if var_id == "WSPD":
-            if "U10" not in ds or "V10" not in ds:
-                logger.debug("  WSPD skipped (U10/V10 not found)")
-                continue
-            logger.info("Processing WSPD (derived) …")
-            for t_idx in range(n_times):
-                u = ds["U10"].isel(Time=t_idx).values.astype("float64")
-                v = ds["V10"].isel(Time=t_idx).values.astype("float64")
-                arr = np.sqrt(u**2 + v**2)
-                arr = np.where(np.isfinite(arr), arr, NODATA).astype("float32")
-                # WRF is bottom-to-top, rasterio wants top-to-bottom
-                arr = np.flipud(arr)
-                out_path = cog_root / "WSPD" / f"{stem}_t{t_idx}.tif"
-                _write_cog(arr, crs, transform, out_path)
-                created.append(out_path)
-            continue
+    if max_workers <= 1:
+        logger.info("Converting %d slices sequentially...", len(tasks))
+        for var_id, t_idx in tasks:
+            res = _convert_wrf_slice(nc_path, cog_root, var_id, t_idx, crs, transform)
+            if res is not None:
+                created.append(res)
+    else:
+        logger.info("Parallelizing COG conversion using %d threads...", max_workers)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(_convert_wrf_slice, nc_path, cog_root, var_id, t_idx, crs, transform)
+                for var_id, t_idx in tasks
+            ]
+            for fut in futures:
+                res = fut.result()
+                if res is not None:
+                    created.append(res)
 
-        # ── Regular variable ─────────────────────────────────────────────────
-        if wrf_name not in ds:
-            logger.debug("  %s not in dataset, skipping", var_id)
-            continue
-
-        logger.info("Processing %s …", var_id)
-        da = ds[wrf_name]
-        for t_idx in range(n_times):
-            arr = da.isel(Time=t_idx).values.astype("float64")
-            arr = arr * cfg["scale"] + cfg["offset"]
-            arr = np.where(np.isfinite(arr), arr, NODATA).astype("float32")
-            # WRF is bottom-to-top, rasterio wants top-to-bottom
-            arr = np.flipud(arr)
-            out_path = cog_root / var_id / f"{stem}_t{t_idx}.tif"
-            _write_cog(arr, crs, transform, out_path)
-            created.append(out_path)
-
-    ds.close()
     return created
 
 # ── GRIB2 conversion ───────────────────────────────────────────────────────────
@@ -306,8 +400,11 @@ def convert_grib2_file(grib_path: str, cog_root: str) -> list[Path]:
             if lats.ndim == 1 and lats[0] < lats[-1]:
                 arr = np.flipud(arr)
             arr = np.where(np.isfinite(arr), arr, NODATA)
+            crs = CRS.from_epsg(4326)
+            height, width = arr.shape
+            transform = from_bounds(lon_min, lat_min, lon_max, lat_max, width, height)
             out_path = cog_root / var_id / f"{stem}_t{t_idx}.tif"
-            _write_cog(arr, lon_min, lon_max, lat_min, lat_max, out_path)
+            _write_cog(arr, crs, transform, out_path)
             created.append(out_path)
 
     ds.close()

@@ -8,6 +8,7 @@ interface CoordinatePopupProps {
   y: number;
   variable: string;
   timeIndex: number;
+  level?: number;
   onClose: () => void;
   onCopy: () => void;
 }
@@ -29,6 +30,7 @@ export const CoordinatePopup: React.FC<CoordinatePopupProps> = ({
   y,
   variable,
   timeIndex,
+  level = 0,
   onClose,
   onCopy
 }) => {
@@ -42,14 +44,14 @@ export const CoordinatePopup: React.FC<CoordinatePopupProps> = ({
     
     // Fetch both point data and time series
     Promise.all([
-      fetch(`/api/probe?lat=${lat}&lon=${lon}&variable=${probeVar}&time=${timeIndex}`).then(res => res.json()),
-      fetch(`/api/time_series?lat=${lat}&lon=${lon}&variable=${probeVar}`).then(res => res.json())
+      fetch(`/api/probe?lat=${lat}&lon=${lon}&variable=${probeVar}&time=${timeIndex}&level=${level}`).then(res => res.json()),
+      fetch(`/api/time_series?lat=${lat}&lon=${lon}&variable=${probeVar}&level=${level}`).then(res => res.json())
     ]).then(([probeRes, seriesRes]) => {
       if (!probeRes.error) setProbeData(probeRes);
       if (!seriesRes.error) setSeriesData(seriesRes);
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, [lat, lon, variable, timeIndex]);
+  }, [lat, lon, variable, timeIndex, level]);
 
   const renderSparkline = () => {
     if (!seriesData || !seriesData.values.length) return null;

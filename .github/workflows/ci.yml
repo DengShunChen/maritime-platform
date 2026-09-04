@@ -5,6 +5,16 @@ on:
     branches: [main, master, develop]
   pull_request:
     branches: [main, master, develop]
+  workflow_dispatch:
+    inputs:
+      run_integration:
+        description: "Run Docker integration QA. Requires a WRF sample under data/."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   frontend:
@@ -27,6 +37,9 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Unit tests
         run: npm run test:run
@@ -52,26 +65,71 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: Compile Python entrypoints
+        working-directory: .
+        run: python -m py_compile backend-service/app_v2.py backend-service/etl_bridge.py backend-service/tile_cache.py backend-service/wind_texture.py backend-service/qa_test.py etl/convert_grib2_to_cog.py scripts/release_check.py scripts/generate_third_party_notices.py
+
       - name: Pytest
         run: pytest tests/ -v
+
+  deploy-config:
+    name: Deployment config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Docker Compose config
+        run: docker compose config --quiet
+
+      - name: Validate nginx API key injection template
+        run: |
+          test -f web-client/nginx.conf.template
+          grep -q 'proxy_set_header X-API-Key "$${API_KEY}"' web-client/nginx.conf.template
+
+      - name: Validate release traceability hooks
+        run: |
+          grep -q 'org.opencontainers.image.revision' backend-service/Dockerfile
+          grep -q 'org.opencontainers.image.revision' web-client/Dockerfile
+          grep -q '@app.route("/version")' backend-service/app_v2.py
+          grep -q 'release gate complete' scripts/release_check.py
+
+      - name: Validate commercial handoff docs
+        run: |
+          test -f CHANGELOG.md
+          test -f docs/OPERATIONS.md
+          test -f docs/SECURITY.md
+          test -f docs/THIRD_PARTY_NOTICES.md
+          grep -q 'docs/OPERATIONS.md' README.md
+          grep -q 'docs/SECURITY.md' README.md
+          grep -q 'CHANGELOG.md' README.md
+          grep -q 'docs/THIRD_PARTY_NOTICES.md' README.md
+          grep -q 'Customer Handoff' docs/OPERATIONS.md
+          grep -q 'Commercial Launch Gaps' docs/SECURITY.md
+
+      - name: Validate third-party notices
+        run: python scripts/generate_third_party_notices.py --check
 
   backend-qa:
     name: Backend (integration QA)
     runs-on: ubuntu-latest
-    needs: [backend-unit]
+    needs: [backend-unit, deploy-config]
+    if: github.event_name == 'workflow_dispatch' && inputs.run_integration == 'true'
     steps:
       - uses: actions/checkout@v4
+
+      - name: Verify WRF sample data exists
+        run: test -f data/wrfout_d01_2026-09-02_00:00:00
 
       - name: Start stack
         run: docker compose up -d --build backend-service db
 
-      - name: Wait for backend health
+      - name: Wait for backend readiness
         run: |
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:6000/health; then exit 0; fi
+            if curl -sf http://localhost:6000/ready; then exit 0; fi
             sleep 3
           done
-          echo "Backend failed to become healthy"
+          echo "Backend failed to become ready"
           docker compose logs backend-service
           exit 1
 

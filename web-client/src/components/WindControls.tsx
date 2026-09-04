@@ -3,6 +3,7 @@ import './WindControls.css';
 
 // Available color schemes for wind particles
 const COLOR_SCHEMES = [
+  { id: 'windy', name: '白線', gradient: 'linear-gradient(90deg, rgba(210,228,232,0.55), rgba(255,255,255,0.96))' },
   { id: 'viridis', name: '綠紫', gradient: 'linear-gradient(90deg, #440154, #3b528b, #21918c, #5ec962, #fde724)' },
   { id: 'turbo', name: '彩虹', gradient: 'linear-gradient(90deg, #30123b, #4145ab, #4f8cce, #aff467, #f9fb0e, #fb8b24, #d93807)' },
   { id: 'plasma', name: '暖色', gradient: 'linear-gradient(90deg, #0c0786, #6a00a8, #cb4778, #f79342, #f0f921)' },
@@ -27,7 +28,7 @@ export const WindControls: React.FC<WindControlsProps> = ({
   fadeOpacity,
   speedFactor,
   particleSize,
-  colorScheme = 'viridis',
+  colorScheme = 'windy',
   onFadeOpacityChange,
   onSpeedFactorChange,
   onParticleSizeChange,
@@ -55,13 +56,13 @@ export const WindControls: React.FC<WindControlsProps> = ({
           <div className="control-group">
             <label className="control-label">
               <span className="label-text">軌跡長度</span>
-              <span className="label-value">{Math.round((1 - fadeOpacity) * 1000)}%</span>
+              <span className="label-value">{Math.round(fadeOpacity * 100)}%</span>
             </label>
             <input
               type="range"
               className="control-slider"
               min="0.9"
-              max="0.99"
+              max="0.995"
               step="0.005"
               value={fadeOpacity}
               onChange={(e) => onFadeOpacityChange(parseFloat(e.target.value))}
@@ -82,7 +83,7 @@ export const WindControls: React.FC<WindControlsProps> = ({
               type="range"
               className="control-slider"
               min="0.1"
-              max="1.0"
+              max="1.5"
               step="0.05"
               value={speedFactor}
               onChange={(e) => onSpeedFactorChange(parseFloat(e.target.value))}
@@ -145,18 +146,20 @@ export const WindControls: React.FC<WindControlsProps> = ({
               className="preset-button"
               onClick={() => {
                 onFadeOpacityChange(0.97);
-                onSpeedFactorChange(0.4);
-                onParticleSizeChange(4.0);
+                onSpeedFactorChange(0.9);
+                onParticleSizeChange(2.0);
+                onColorSchemeChange?.('windy');
               }}
             >
-              預設
+              Windy
             </button>
             <button
               className="preset-button"
               onClick={() => {
-                onFadeOpacityChange(0.99);
-                onSpeedFactorChange(0.3);
-                onParticleSizeChange(2.5);
+                onFadeOpacityChange(0.992);
+                onSpeedFactorChange(0.6);
+                onParticleSizeChange(1.5);
+                onColorSchemeChange?.('windy');
               }}
             >
               細緻
@@ -165,8 +168,9 @@ export const WindControls: React.FC<WindControlsProps> = ({
               className="preset-button"
               onClick={() => {
                 onFadeOpacityChange(0.94);
-                onSpeedFactorChange(0.6);
-                onParticleSizeChange(5.0);
+                onSpeedFactorChange(1.2);
+                onParticleSizeChange(2.5);
+                onColorSchemeChange?.('turbo');
               }}
             >
               強勁

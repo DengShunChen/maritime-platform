@@ -42,11 +42,11 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
   private gl: WebGLRenderingContext | null = null;
 
   // Options
-  private _fadeOpacity: number = 0.90;
-  private speedFactor: number = 0.5;
+  private _fadeOpacity: number = 0.985;
+  private speedFactor: number = 0.9;
   private dropRate: number = 0.003;
   private dropRateBump: number = 0.01;
-  private _particleSize: number = 1.5;
+  private _particleSize: number = 2.0;
 
   // Data
   private windTexture: WebGLTexture | null = null;
@@ -74,9 +74,10 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
   // State
   private numParticles: number = 65536;
   private particleRes: number;
-  private currentColormap: string = 'viridis';
+  private currentColormap: string = 'windy';
   private isActive: boolean = false;
   private timeIndex: number = -1;
+  private level: number = 0;
 
   // Trail correction state
   private lastMapCenter: maplibregl.LngLat | null = null;
@@ -226,9 +227,10 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
 
   private createParticleIndexBuffer(): WebGLBuffer | null {
     const gl = this.gl!;
-    const indices = new Float32Array(this.numParticles);
+    const indices = new Float32Array(this.numParticles * 2);
     for (let i = 0; i < this.numParticles; i++) {
-      indices[i] = i;
+      indices[i * 2] = i * 2;
+      indices[i * 2 + 1] = i * 2 + 1;
     }
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -242,15 +244,14 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
     // Create random initial particle positions
     const particleData = new Uint8Array(this.numParticles * 4);
     for (let i = 0; i < this.numParticles; i++) {
-      // Encode random position in [0, 1] range
       const x = Math.random();
       const y = Math.random();
 
-      // High precision encoding: RG = fractional, BA = integer
-      particleData[i * 4 + 0] = Math.floor(256 * (x * 256 - Math.floor(x * 256)));  // R
-      particleData[i * 4 + 1] = Math.floor(256 * (y * 256 - Math.floor(y * 256)));  // G
-      particleData[i * 4 + 2] = Math.floor(x * 256);  // B
-      particleData[i * 4 + 3] = Math.floor(y * 256);  // A
+      // RG = current position, BA = previous position.
+      particleData[i * 4 + 0] = Math.floor(x * 255);
+      particleData[i * 4 + 1] = Math.floor(y * 255);
+      particleData[i * 4 + 2] = particleData[i * 4 + 0];
+      particleData[i * 4 + 3] = particleData[i * 4 + 1];
     }
 
     this.particleStateTexture0 = this.createTexture(
@@ -352,6 +353,12 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
     gl.bindTexture(gl.TEXTURE_2D, this.windTexture);
     gl.uniform1i(gl.getUniformLocation(this.updateProgram, 'u_wind'), 1);
 
+    if (this.coordsTexture) {
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, this.coordsTexture);
+      gl.uniform1i(gl.getUniformLocation(this.updateProgram, 'u_coords'), 2);
+    }
+
     // Set uniforms
     gl.uniform2f(gl.getUniformLocation(this.updateProgram, 'u_wind_res'),
       this.windMetadata.width, this.windMetadata.height);
@@ -359,6 +366,12 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
       this.windMetadata.uMin, this.windMetadata.vMin);
     gl.uniform2f(gl.getUniformLocation(this.updateProgram, 'u_wind_max'),
       this.windMetadata.uMax, this.windMetadata.vMax);
+    if (this.coordsMetadata) {
+      gl.uniform2f(gl.getUniformLocation(this.updateProgram, 'u_coords_range_lon'),
+        this.coordsMetadata.lonMin, this.coordsMetadata.lonMax);
+      gl.uniform2f(gl.getUniformLocation(this.updateProgram, 'u_coords_range_lat'),
+        this.coordsMetadata.latMin, this.coordsMetadata.latMax);
+    }
     gl.uniform1f(gl.getUniformLocation(this.updateProgram, 'u_rand_seed'), Math.random());
     gl.uniform1f(gl.getUniformLocation(this.updateProgram, 'u_speed_factor'), this.speedFactor);
     gl.uniform1f(gl.getUniformLocation(this.updateProgram, 'u_drop_rate'), this.dropRate);
@@ -424,7 +437,45 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
     this.drawQuad(this.screenProgram);
 
 
-    // === STEP 2: Draw new particles on top ===
+    // === STEP 2: Draw new particles into the trail buffer ===
+    this.drawParticleGeometry(matrix);
+
+    // Unbind framebuffer -> Return to MapLibre's main framebuffer
+    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFramebuffer);
+
+    // === STEP 3: Copy screen texture to MapLibre's framebuffer ===
+    gl.viewport(0, 0, canvas.width, canvas.height);
+
+    gl.useProgram(this.screenProgram);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.screenTexture);
+    gl.uniform1i(gl.getUniformLocation(this.screenProgram, 'u_screen'), 0);
+
+    // Reset offset for final composite (we already shifted in step 1)
+    gl.uniform2f(gl.getUniformLocation(this.screenProgram, 'u_screen_offset'), 0, 0);
+    gl.uniform1f(gl.getUniformLocation(this.screenProgram, 'u_opacity'), 1.0);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    this.drawQuad(this.screenProgram);
+
+    // Draw the newest streaks directly as well, so they stay visible over
+    // bright raster layers while the accumulated trail buffer fades behind.
+    this.drawParticleGeometry(matrix);
+
+    gl.disable(gl.BLEND);
+
+    // Swap screen and background textures for next frame
+    const temp = this.backgroundTexture;
+    this.backgroundTexture = this.screenTexture;
+    this.screenTexture = temp;
+  }
+
+  private drawParticleGeometry(matrix: number[]): void {
+    const gl = this.gl!;
+    if (!this.drawProgram || !this.windMetadata) return;
+
     gl.useProgram(this.drawProgram);
 
     // Bind particle state texture
@@ -476,10 +527,9 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
       this.windMetadata.uMax, this.windMetadata.vMax);
     gl.uniform1f(gl.getUniformLocation(this.drawProgram, 'u_point_size'), this._particleSize);
 
-    // MapLibre Matrix!
     gl.uniformMatrix4fv(gl.getUniformLocation(this.drawProgram, 'u_matrix'), false, matrix);
 
-    // Draw particles as points
+    // Draw each particle as a short trail segment.
     gl.bindBuffer(gl.ARRAY_BUFFER, this.particleIndexBuffer);
     const indexAttr = gl.getAttribLocation(this.drawProgram, 'a_index');
     gl.enableVertexAttribArray(indexAttr);
@@ -489,36 +539,9 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
-    gl.drawArrays(gl.POINTS, 0, this.numParticles);
-
-    gl.disable(gl.BLEND); // Disable blend before next pass if needed
-
-    // Unbind framebuffer -> Return to MapLibre's main framebuffer
-    gl.bindFramebuffer(gl.FRAMEBUFFER, targetFramebuffer);
-
-    // === STEP 3: Copy screen texture to MapLibre's framebuffer ===
-    gl.viewport(0, 0, canvas.width, canvas.height);
-
-    gl.useProgram(this.screenProgram);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.screenTexture);
-    gl.uniform1i(gl.getUniformLocation(this.screenProgram, 'u_screen'), 0);
-
-    // Reset offset for final composite (we already shifted in step 1)
-    gl.uniform2f(gl.getUniformLocation(this.screenProgram, 'u_screen_offset'), 0, 0);
-    gl.uniform1f(gl.getUniformLocation(this.screenProgram, 'u_opacity'), 1.0);
-
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-
-    this.drawQuad(this.screenProgram);
-
-    gl.disable(gl.BLEND);
-
-    // Swap screen and background textures for next frame
-    const temp = this.backgroundTexture;
-    this.backgroundTexture = this.screenTexture;
-    this.screenTexture = temp;
+    gl.lineWidth(Math.max(1, Math.min(2, this._particleSize * 0.45)));
+    gl.drawArrays(gl.LINES, 0, this.numParticles * 2);
+    gl.drawArrays(gl.POINTS, 0, this.numParticles * 2);
   }
 
   private drawQuad(program: WebGLProgram): void {
@@ -544,13 +567,14 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
     return this.map ? this.map.getCanvas() : null;
   }
 
-  public async loadWindData(timeIndex: number): Promise<void> {
-    if (this.timeIndex === timeIndex && this.windTexture && this.coordsTexture) return;
+  public async loadWindData(timeIndex: number, level: number = 0): Promise<void> {
+    if (this.timeIndex === timeIndex && this.level === level && this.windTexture && this.coordsTexture) return;
     this.timeIndex = timeIndex;
+    this.level = level;
 
     try {
       // 1. Fetch Metadata
-      const metaRes = await fetch(`/api/wind_texture?time=${timeIndex}&metadata=true`);
+      const metaRes = await fetch(`/api/wind_texture?time=${timeIndex}&level=${level}&metadata=true`);
       if (!metaRes.ok) throw new Error('Failed to fetch wind metadata');
       const metadata = await metaRes.json();
 
@@ -571,11 +595,11 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
         image.onload = () => resolve();
         image.onerror = () => reject(new Error('Failed to load wind texture image'));
       });
-      image.src = `/api/wind_texture?time=${timeIndex}`;
+      image.src = `/api/wind_texture?time=${timeIndex}&level=${level}`;
       await windPromise;
 
       // 3. Fetch Coords Texture Binary Data
-      const coordsRes = await fetch(`/api/coords_texture?time=${timeIndex}`);
+      const coordsRes = await fetch(`/api/coords_texture?time=${timeIndex}&level=${level}`);
       if (!coordsRes.ok) throw new Error('Failed to fetch coords texture');
       
       const coordsBuffer = await coordsRes.arrayBuffer();
@@ -637,7 +661,12 @@ export class WebGLWindLayer implements maplibregl.CustomLayerInterface {
 
     const grad = ctx.createLinearGradient(0, 0, 256, 0);
 
-    if (scheme === 'viridis') {
+    if (scheme === 'windy') {
+      grad.addColorStop(0, 'rgba(210, 228, 232, 0.55)');
+      grad.addColorStop(0.35, 'rgba(232, 242, 240, 0.68)');
+      grad.addColorStop(0.7, 'rgba(255, 255, 255, 0.86)');
+      grad.addColorStop(1, 'rgba(255, 255, 255, 0.96)');
+    } else if (scheme === 'viridis') {
       grad.addColorStop(0, '#440154');
       grad.addColorStop(0.25, '#3b528b');
       grad.addColorStop(0.5, '#21918c');

@@ -47,80 +47,93 @@ float latToMercatorY(float lat) {
     return (0.5 - y / (2.0 * PI));
 }
 
-// Decode 16-bit normalized value from 2 bytes (high, low) in [0,1] range
 float decode16(float high, float low) {
-    // high and low are 0..1 from texture
-    // Convert back to 0..255 space then to 16 bit integer
     float h = floor(high * 255.0 + 0.5);
     float l = floor(low * 255.0 + 0.5);
     float val = h * 256.0 + l;
-    return val / 65535.0; // Normalize back to 0..1
+    return val / 65535.0;
+}
+
+vec2 decodeLonLat(vec2 uv) {
+    vec4 coordsData = texture2D(u_coords, clamp(uv, 0.0, 1.0));
+    float lon = mix(u_coords_range_lon.x, u_coords_range_lon.y, decode16(coordsData.r, coordsData.g));
+    float lat = mix(u_coords_range_lat.x, u_coords_range_lat.y, decode16(coordsData.b, coordsData.a));
+    return vec2(lon, lat);
+}
+
+vec2 windToTextureOffset(vec2 pos, vec2 velocity, float scale) {
+    vec2 texel = 1.0 / max(u_wind_res, vec2(1.0));
+    vec2 lonLat = decodeLonLat(pos);
+    vec2 lonLatDx = decodeLonLat(pos + vec2(texel.x, 0.0));
+    vec2 lonLatDy = decodeLonLat(pos + vec2(0.0, texel.y));
+    vec2 dLonLatDx = lonLatDx - lonLat;
+    vec2 dLonLatDy = lonLatDy - lonLat;
+
+    float latRad = radians(clamp(lonLat.y, -80.0, 80.0));
+    float cosLat = max(cos(latRad), 0.15);
+    vec2 targetLonLatDelta = vec2(velocity.x / cosLat, velocity.y) * scale;
+
+    float det = dLonLatDx.x * dLonLatDy.y - dLonLatDy.x * dLonLatDx.y;
+    if (abs(det) <= 0.0000001) {
+        return vec2(0.0);
+    }
+    vec2 offsetInTexels = vec2(
+        (targetLonLatDelta.x * dLonLatDy.y - dLonLatDy.x * targetLonLatDelta.y) / det,
+        (dLonLatDx.x * targetLonLatDelta.y - targetLonLatDelta.x * dLonLatDx.y) / det
+    );
+    return offsetInTexels * texel;
 }
 
 
 
 
 void main() {
-    // Calculate texture coordinates for this particle
+    float particle_index = floor(a_index * 0.5);
+    float segment_endpoint = mod(a_index, 2.0);
+
     vec2 tex_coord = vec2(
-        fract(a_index / u_particles_res),
-        floor(a_index / u_particles_res) / u_particles_res
+        fract(particle_index / u_particles_res),
+        floor(particle_index / u_particles_res) / u_particles_res
     );
-    
-    // Decode position from RGBA (normalized 0-1 in wind texture space)
+
     vec4 color = texture2D(u_particles, tex_coord);
-    v_particle_pos = vec2(
+    vec2 current_pos = vec2(
         color.r / 255.0 + color.b,
         color.g / 255.0 + color.a
     );
-    
+    vec2 velocity = mix(u_wind_min, u_wind_max, texture2D(u_wind, current_pos).rg);
+    vec2 trail_offset = clamp(windToTextureOffset(current_pos, velocity, 0.042), vec2(-0.045), vec2(0.045));
+    vec2 previous_pos = current_pos - trail_offset;
+    v_particle_pos = mix(previous_pos, current_pos, segment_endpoint);
+
     // Hide particles near texture edges (finite WRF domain)
     const float margin = 0.02;
     v_in_bounds = (
         v_particle_pos.x > margin && v_particle_pos.x < 1.0 - margin &&
         v_particle_pos.y > margin && v_particle_pos.y < 1.0 - margin
     ) ? 1.0 : 0.0;
-    
-    // Sample wind velocity to determine speed
-    vec2 velocity = mix(u_wind_min, u_wind_max, texture2D(u_wind, v_particle_pos).rg);
+
     float speed = length(velocity);
     float speed_max = length(u_wind_max);
     float speed_ratio = clamp(speed / speed_max, 0.0, 1.0);
     v_speed_t = speed_ratio;
-    
-    // === MAP LOCATION LOOKUP ===
-    // Use v_particle_pos to sample the coordinate texture
-    vec4 coordsData = texture2D(u_coords, v_particle_pos);
-    
-    // Decode Lon/Lat from texture
-    // R/G = Lon (Normalized within X-Coords-Lon-Range)
-    // B/A = Lat (Normalized within X-Coords-Lat-Range)
-    float lonNorm = decode16(coordsData.r, coordsData.g);
-    float latNorm = decode16(coordsData.b, coordsData.a);
-    
-    // Map to real degrees
-    float lon = mix(u_coords_range_lon.x, u_coords_range_lon.y, lonNorm);
-    float lat = mix(u_coords_range_lat.x, u_coords_range_lat.y, latNorm);
-    
-    // If coords texture is missing (0,0,0,0 everywhere or uniform 0), we might get garbage.
-    // Fallback? If u_coords_range_lon is 0,0, logic breaks.
-    // We assume backend always provides valid ranges if texture provides data.
-    
+
+    vec2 lonLat = decodeLonLat(v_particle_pos);
+    float lon = lonLat.x;
+    float lat = lonLat.y;
+
     // Mercator projection
     float mercX = lonToMercatorX(lon);
     float mercY = latToMercatorY(lat);
-    
+
     // MapLibre provides u_matrix that transforms Mercator [0, 1] to Clip Space
     gl_Position = u_matrix * vec4(mercX, mercY, 0.0, 1.0);
-    
+
     // If out of bounds or wind is zero, hide the particle
     if (speed_ratio < 0.01) {
          gl_PointSize = 0.0;
          gl_Position = vec4(2.0, 2.0, 0.0, 1.0); // Off-screen
     } else {
-        // Dynamic point size
-        float size_factor = 0.8 + v_speed_t * 0.6;
-        
-        gl_PointSize = u_point_size * size_factor; 
+        gl_PointSize = max(1.0, u_point_size * 0.35);
     }
 }

@@ -15,6 +15,7 @@ import urllib.error
 import urllib.request
 
 BASE_URL = os.environ.get("BACKEND_URL", "http://localhost:5000").rstrip("/")
+API_KEY = os.environ.get("API_KEY", "")
 
 
 def test_endpoint(
@@ -26,7 +27,8 @@ def test_endpoint(
 ) -> tuple[bool, int, str]:
     url = f"{BASE_URL}{path}"
     try:
-        req = urllib.request.Request(url)
+        headers = {"X-API-Key": API_KEY} if API_KEY else {}
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=30) as response:
             code = response.getcode()
             content_type = response.headers.get("Content-Type", "")
@@ -74,8 +76,11 @@ def run_qa() -> None:
 
     endpoints: list[tuple[str, str, str | None, int]] = [
         ("/health", "Health Check", "application/json", 0),
+        ("/ready", "Readiness Check", "application/json", 0),
+        ("/version", "Version Info", "application/json", 0),
         ("/variables", "Variables List", "application/json", 0),
         ("/time_points", "Time Points", "application/json", 0),
+        ("/model_summary", "Model Summary", "application/json", 0),
         ("/netcdf_files", "NetCDF Files List", "application/json", 0),
         ("/cog_manifest", "COG Manifest", "application/json", 0),
         ("/etl/status", "ETL Status", "application/json", 0),
@@ -85,6 +90,7 @@ def run_qa() -> None:
         ("/variable_stats?variable=WSPD&time=0", "Stats: WSPD", "application/json", 0),
         ("/probe?lat=24&lon=121&variable=T2&time=0", "Probe: T2", "application/json", 0),
         ("/probe?lat=24&lon=121&variable=WSPD&time=0", "Probe: WSPD", "application/json", 0),
+        ("/time_series?lat=24&lon=121&variable=T2&level=0", "Time Series: T2", "application/json", 0),
         ("/contours?variable=PSFC&time=0", "Contours: PSFC", "application/json", 0),
         ("/tiles/3/6/3?variable=T2&time=0&vmin=-20&vmax=40", "Tile: T2", "image/png", 100),
         ("/wind_texture?time=0&metadata=true", "Wind Metadata", "application/json", 0),

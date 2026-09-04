@@ -22,3 +22,24 @@ CLAUDE.md
 AGENTS.md
 data/
 backend-service/data/
+
+# Local secrets
+.env
+web-client/.env
+
+# Local environments
+.venv/
+.venv*/
+venv/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Frontend artifacts
+web-client/dist/
+web-client/node_modules/.tmp/
+
+# macOS
+.DS_Store

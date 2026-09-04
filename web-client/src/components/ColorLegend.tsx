@@ -15,7 +15,10 @@ const COLORMAP_GRADIENTS: Record<string, string> = {
   'ylgnbu': 'linear-gradient(to right, #ffffd9, #edf8b1, #c7e9b4, #7fcdbb, #41b6c4, #1d91c0, #225ea8)',
   'rdbu_r': 'linear-gradient(to right, #2166ac, #4393c3, #92c5de, #f7f7f7, #f4a582, #d6604d, #b2182b)',
   'gist_ncar': 'linear-gradient(to right, #000080, #0080ff, #00ffff, #00ff00, #ffff00, #ff8000, #ff0000)',
-  'plasma': 'linear-gradient(to right, #0d0887, #7e03a8, #cc4778, #f89441, #f0f921)'
+  'plasma': 'linear-gradient(to right, #0d0887, #7e03a8, #cc4778, #f89441, #f0f921)',
+  'turbo': 'linear-gradient(to right, #30123b, #4145ab, #4f8cce, #aff467, #f9fb0e, #fb8b24, #d93807)',
+  'magma': 'linear-gradient(to right, #000003, #3b0f6f, #8c2980, #dd4968, #fdb42f, #fcfcba)',
+  'twilight': 'linear-gradient(to right, #e2d9e2, #9ebbc9, #5573a2, #2f2250, #7d2d59, #c67b8d, #e2d9e2)'
 };
 
 const VARIABLE_COLOR_SCHEMES: Record<string, string> = {
@@ -26,7 +29,13 @@ const VARIABLE_COLOR_SCHEMES: Record<string, string> = {
   'U10': 'rdbu_r',
   'V10': 'rdbu_r',
   'REFD_MAX': 'gist_ncar',
-  'WSPD': 'plasma'
+  'WSPD': 'plasma',
+  'SST': 'turbo',
+  'WAVE_HS': 'magma',
+  'WAVE_TP': 'viridis',
+  'WAVE_DIR': 'twilight',
+  'CURRENT_SPD': 'plasma',
+  'SSH': 'rdbu_r'
 };
 
 export const ColorLegend: React.FC<ColorLegendProps> = ({

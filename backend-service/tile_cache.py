@@ -28,6 +28,7 @@ class TileLRUCache:
         y: int,
         vmin: float | None,
         vmax: float | None,
+        level: int = 0,
     ) -> tuple[Any, ...]:
         return (
             file_stem,
@@ -38,6 +39,7 @@ class TileLRUCache:
             y,
             round(vmin, 3) if vmin is not None else None,
             round(vmax, 3) if vmax is not None else None,
+            level,
         )
 
     def _peek(self, key: tuple[Any, ...]) -> bytes | None:

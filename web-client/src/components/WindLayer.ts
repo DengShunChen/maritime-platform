@@ -1,5 +1,7 @@
 
 
+import maplibregl from 'maplibre-gl';
+
 interface WindPoint {
   lon: number;
   lat: number;
@@ -19,13 +21,19 @@ interface WindData {
   bounds: number[];
 }
 
+interface WindGridCell {
+  u: number;
+  v: number;
+  count: number;
+}
+
 export class WindLayer {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   particles: Particle[] = [];
-  windGrid: WindPoint[][] = []; // roughly grid indexed
   width: number = 0;
   height: number = 0;
+  private dpr: number = 1;
   animationFrameId: number | null = null;
   map: maplibregl.Map;
   windData: WindPoint[] | null = null;
@@ -35,6 +43,7 @@ export class WindLayer {
   maxAge = 120;
   speedFactor = 30; // Seconds per frame for visual speed (tuned)
   fadeOpacity = 0.93; // Higher = longer trails
+  particleLineWidth = 1.1;
 
   constructor(map: maplibregl.Map) {
     this.map = map;
@@ -59,12 +68,15 @@ export class WindLayer {
   }
 
   resize() {
-    this.width = this.map.getCanvas().width;
-    this.height = this.map.getCanvas().height;
-    this.canvas.width = this.width;
-    this.canvas.height = this.height;
-    this.canvas.style.width = this.map.getCanvas().style.width;
-    this.canvas.style.height = this.map.getCanvas().style.height;
+    const rect = this.map.getCanvas().getBoundingClientRect();
+    this.dpr = window.devicePixelRatio || 1;
+    this.width = rect.width;
+    this.height = rect.height;
+    this.canvas.width = Math.max(1, Math.round(rect.width * this.dpr));
+    this.canvas.height = Math.max(1, Math.round(rect.height * this.dpr));
+    this.canvas.style.width = `${rect.width}px`;
+    this.canvas.style.height = `${rect.height}px`;
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
   handleResize() {
@@ -81,6 +93,12 @@ export class WindLayer {
     this.initParticles();
   }
 
+  async loadWindData(timeIndex: number, level: number = 0): Promise<void> {
+    const res = await fetch(`/api/wind_data?time=${timeIndex}&level=${level}&max_points=18000`);
+    if (!res.ok) throw new Error('Failed to fetch wind data');
+    this.updateData(await res.json());
+  }
+
   tuneParticleCount(pointCount: number) {
     const target = Math.round(pointCount / 8);
     const clamped = Math.max(500, Math.min(4000, target));
@@ -95,6 +113,31 @@ export class WindLayer {
   }
 
   createRandomParticle(): Particle {
+    if (this.windData && this.windData.length > 0) {
+      const mapBounds = this.map.getBounds();
+      let base = this.windData[Math.floor(Math.random() * this.windData.length)];
+
+      for (let tries = 0; tries < 12; tries++) {
+        const candidate = this.windData[Math.floor(Math.random() * this.windData.length)];
+        if (
+          candidate.lon >= mapBounds.getWest() && candidate.lon <= mapBounds.getEast() &&
+          candidate.lat >= mapBounds.getSouth() && candidate.lat <= mapBounds.getNorth()
+        ) {
+          base = candidate;
+          break;
+        }
+      }
+
+      const lonJitter = Math.max(0.02, (this.maxLon - this.minLon) / this.gridWidth * 0.35);
+      const latJitter = Math.max(0.02, (this.maxLat - this.minLat) / this.gridHeight * 0.35);
+      return {
+        lon: base.lon + (Math.random() - 0.5) * lonJitter,
+        lat: base.lat + (Math.random() - 0.5) * latJitter,
+        age: Math.random() * this.maxAge,
+        speedMult: 0.55 + Math.random() * 0.9
+      };
+    }
+
     const bounds = this.getParticleBounds();
     return {
       lon: bounds.minLon + Math.random() * (bounds.maxLon - bounds.minLon),
@@ -105,6 +148,7 @@ export class WindLayer {
   }
 
   start() {
+    this.resize();
     if (!this.animationFrameId) {
       this.animate();
     }
@@ -124,18 +168,18 @@ export class WindLayer {
 
 
   // Optimized Grid Lookup
-  grid: { u: number, v: number }[][] | null = null;
-  gridWidth = 100;
-  gridHeight = 100;
+  grid: WindGridCell[][] | null = null;
+  gridWidth = 180;
+  gridHeight = 120;
   minLon = 0; maxLon = 0; minLat = 0; maxLat = 0;
 
   buildGrid() {
     if (!this.windData) return;
 
-    this.grid = Array(this.gridWidth).fill(null).map(() => Array(this.gridHeight).fill({ u: 0, v: 0 }));
+    this.grid = Array.from({ length: this.gridWidth }, () =>
+      Array.from({ length: this.gridHeight }, () => ({ u: 0, v: 0, count: 0 }))
+    );
 
-    // Find bounds
-    // Find bounds
     let minLon = Infinity, maxLon = -Infinity;
     let minLat = Infinity, maxLat = -Infinity;
 
@@ -156,20 +200,34 @@ export class WindLayer {
       const x = Math.floor((p.lon - this.minLon) / (this.maxLon - this.minLon) * (this.gridWidth - 1));
       const y = Math.floor((p.lat - this.minLat) / (this.maxLat - this.minLat) * (this.gridHeight - 1));
       if (x >= 0 && x < this.gridWidth && y >= 0 && y < this.gridHeight) {
-        this.grid[x][y] = { u: p.u, v: p.v };
+        const cell = this.grid[x][y];
+        cell.u += p.u;
+        cell.v += p.v;
+        cell.count += 1;
+      }
+    }
+
+    for (let x = 0; x < this.gridWidth; x++) {
+      for (let y = 0; y < this.gridHeight; y++) {
+        const cell = this.grid[x][y];
+        if (cell.count > 0) {
+          cell.u /= cell.count;
+          cell.v /= cell.count;
+        }
       }
     }
   }
 
   getGridVector(lng: number, lat: number) {
-    if (!this.grid) return { u: 0, v: 0 };
+    if (!this.grid) return null;
     const x = Math.floor((lng - this.minLon) / (this.maxLon - this.minLon) * (this.gridWidth - 1));
     const y = Math.floor((lat - this.minLat) / (this.maxLat - this.minLat) * (this.gridHeight - 1));
 
     if (x >= 0 && x < this.gridWidth && y >= 0 && y < this.gridHeight) {
-      return this.grid[x][y];
+      const cell = this.grid[x][y];
+      if (cell.count > 0) return cell;
     }
-    return { u: 0, v: 0 };
+    return null;
   }
 
   animate() {
@@ -179,6 +237,26 @@ export class WindLayer {
 
   clearCanvas() {
     this.ctx.clearRect(0, 0, this.width, this.height);
+  }
+
+  setParams(options: { fadeOpacity?: number; speedFactor?: number; particleSize?: number }) {
+    if (options.fadeOpacity !== undefined) this.fadeOpacity = options.fadeOpacity;
+    if (options.speedFactor !== undefined) this.speedFactor = 9000 * options.speedFactor;
+    if (options.particleSize !== undefined) this.particleLineWidth = Math.max(0.8, options.particleSize * 0.55);
+  }
+
+  setColorScheme(scheme: string) {
+    void scheme;
+    // Canvas wind particles intentionally use Windy-style white strokes.
+  }
+
+  getCanvas(): HTMLCanvasElement {
+    return this.canvas;
+  }
+
+  destroy() {
+    this.stop();
+    this.canvas.remove();
   }
 
   getParticleBounds() {
@@ -223,7 +301,7 @@ export class WindLayer {
     this.ctx.fillRect(0, 0, this.width, this.height);
 
     this.ctx.globalCompositeOperation = 'source-over';
-    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; // Particle color
+    this.ctx.lineCap = 'round';
 
     // Current map bounds for efficient culling?
     // We calculate position in Mercator 0..1 then project to screen pixels
@@ -233,23 +311,14 @@ export class WindLayer {
         Object.assign(p, this.createRandomParticle());
       }
 
-      // Get screen position
-
-      // We interpret p.x/p.y as relative to map center? NO.
-      // Let's treat p.x/p.y as LNG/LAT directly? Easier.
-      // If p is Lng/Lat, we project to screen.
-
-      // RE-DESIGN: Store particles as {lon, lat}.
       const screenPos = this.map.project([p.lon, p.lat]);
-
-      // Draw
-      if (screenPos.x >= 0 && screenPos.x <= this.width && screenPos.y >= 0 && screenPos.y <= this.height) {
-        // Larger particles for better visibility
-        this.ctx.fillRect(screenPos.x, screenPos.y, 4, 4);
-      }
 
       // Move
       const vector = this.getGridVector(p.lon, p.lat);
+      if (!vector) {
+        Object.assign(p, this.createRandomParticle());
+        continue;
+      }
 
       // Simple Euler integration
       // Delta Lon ~ U / cos(lat)
@@ -261,8 +330,35 @@ export class WindLayer {
       const dLon = (vector.u * seconds * metersToDeg) / Math.cos(latRad);
       const dLat = (vector.v * seconds * metersToDeg);
 
-      p.lon += dLon;
-      p.lat += dLat; // V increases latitude (north)
+      const nextLon = p.lon + dLon;
+      const nextLat = p.lat + dLat;
+      const nextScreenPos = this.map.project([nextLon, nextLat]);
+      const speed = Math.sqrt(vector.u * vector.u + vector.v * vector.v);
+
+      if (
+        screenPos.x >= -40 && screenPos.x <= this.width + 40 &&
+        screenPos.y >= -40 && screenPos.y <= this.height + 40 &&
+        nextScreenPos.x >= -40 && nextScreenPos.x <= this.width + 40 &&
+        nextScreenPos.y >= -40 && nextScreenPos.y <= this.height + 40
+      ) {
+        const alpha = Math.max(0.35, Math.min(0.9, 0.35 + speed / 28));
+        this.ctx.strokeStyle = 'rgba(0, 22, 26, 0.22)';
+        this.ctx.lineWidth = this.particleLineWidth + 1.1;
+        this.ctx.beginPath();
+        this.ctx.moveTo(screenPos.x, screenPos.y);
+        this.ctx.lineTo(nextScreenPos.x, nextScreenPos.y);
+        this.ctx.stroke();
+
+        this.ctx.strokeStyle = `rgba(245, 250, 248, ${alpha})`;
+        this.ctx.lineWidth = this.particleLineWidth;
+        this.ctx.beginPath();
+        this.ctx.moveTo(screenPos.x, screenPos.y);
+        this.ctx.lineTo(nextScreenPos.x, nextScreenPos.y);
+        this.ctx.stroke();
+      }
+
+      p.lon = nextLon;
+      p.lat = nextLat; // V increases latitude (north)
 
       p.age++;
 

@@ -6,6 +6,9 @@ export interface VariableInfo {
   description?: string;
   units: string;
   colormap?: string;
+  numLevels?: number;
+  category?: 'weather' | 'marine';
+  available?: boolean;
 }
 
 export interface VariableStats {
@@ -49,3 +52,23 @@ export interface EtlStatus {
   files_created: number;
 }
 
+export interface ModelSummary {
+  file: string;
+  path: string;
+  timeCount: number;
+  bounds: [number, number, number, number];
+  availableVariables: number;
+  marineVariables: number;
+  cogTilesReady: number;
+  etl: EtlStatus;
+  error?: string;
+}
+
+export interface VersionInfo {
+  service: string;
+  version: string;
+  gitSha: string;
+  buildDate: string;
+  dataset: string | null;
+  error?: string;
+}
